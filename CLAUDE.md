@@ -9,7 +9,9 @@ Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `D
 3. Stop and ask for user-only actions: TensorRT download, tunnel hostname, keypoint model approval, recording data.
 4. Fix root causes. Never loosen tolerances or swallow errors to get green.
 5. Keep CLAUDE.md, STATUS.md and DECISIONS.md current.
-6. Commit at each passed gate. Never push. Never commit datasets, clips, .onnx, .engine or build folders.
+6. THE USER commits and pushes (their request, 2026-10-21). At each passed gate: update STATUS.md, run a secret/size
+   scan of `git status`, then tell the user what is ready to commit and suggest a message. Do NOT run `git commit` or
+   `git push` unless the user asks in that message. Never include datasets, clips, .onnx, .engine or build folders.
 7. Never ask for, print or store the Cloudflare tunnel token. The app secret comes from `SIGNLANG_TOKEN` only.
 8. The repo lives at `C:\dev\almighty-sign-language` (no spaces). Quote every path.
 9. Small, readable code. Performance rules apply only to the CUDA hot path.
