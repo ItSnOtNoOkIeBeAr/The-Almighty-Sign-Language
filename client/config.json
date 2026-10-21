@@ -1,0 +1,8 @@
+{
+  "url": "ws://127.0.0.1:8765/ws",
+  "width": 1280,
+  "height": 720,
+  "fps": 15,
+  "jpeg_quality": 80,
+  "camera_index": 0
+}

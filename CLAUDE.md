@@ -1,4 +1,4 @@
-﻿# CLAUDE.md: The Almighty Sign Language
+# CLAUDE.md: The Almighty Sign Language
 
 Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `DECISIONS.md`.
 
@@ -21,9 +21,9 @@ Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `D
 - The client runs on a CPU-only laptop: opencv-python, websockets, numpy only.
 
 ## Current phase
-Phases 0 and 1 done. Next: Phase 2 (client with live view/overlay/record, fallback server with placeholder
-temporal model + dummy keypoint step, `protocol/conformance_test.py`). At the Phase 2 gate, ASK the user for
-the Cloudflare tunnel hostname (never the token).
+Phases 0-1 done. Phase 2 PARTIAL: everything passes locally; BLOCKED on the Cloudflare tunnel (service not installed,
+hostname not given). Do not touch the tunnel token/config. After the tunnel gates pass: push, then Phase 3 (keypoint model
+selection) needs user approval before Phase 4.
 
 ## Tool locations
 - TensorRT: `C:\dev\TensorRT-10.16.1.11` (set `TENSORRT_ROOT`; put its `bin` on PATH to run exes). vcpkg: `C:\dev\vcpkg`.
@@ -35,5 +35,9 @@ the Cloudflare tunnel hostname (never the token).
 "x64 Native Tools Command Prompt for VS 2022" also works.
 
 ## How to build and run
-(Filled in as phases land.)
+Server port: 127.0.0.1:8765. Token: user env var SIGNLANG_TOKEN (never in files/chat).
+- Fallback server: `training\.venv\Scripts\python server\fallback\fallback_server.py`  (open a NEW terminal after setx)
+- Conformance: `client\.venv\Scripts\python protocol\conformance_test.py --url ws://127.0.0.1:8765/ws`  (expects 9/9)
+- Client: `client\.venv\Scripts\python client\client.py [--headless --duration 10] [--url wss://<host>/ws]`; this PC's camera is 640x480: add `--width 640 --height 480`
+- Record: `client.py --record <label> --signer <id>`; review: `client.py --review`
 

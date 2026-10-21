@@ -1,0 +1,26 @@
+{
+  "net": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "max_message_bytes": 2097152
+  },
+  "models": {
+    "temporal": "server/models/temporal_placeholder.onnx"
+  },
+  "window": {
+    "frames": 45,
+    "feature_dim": 96,
+    "run_every_k_frames": 1
+  },
+  "decision": {
+    "ema_alpha": 0.5,
+    "commit_consecutive_M": 4,
+    "commit_threshold": 0.75,
+    "hold_ms": 500,
+    "cooldown_ms": 800
+  },
+  "vram": {
+    "min_free_gb": 4,
+    "max_use_gb": 10
+  }
+}

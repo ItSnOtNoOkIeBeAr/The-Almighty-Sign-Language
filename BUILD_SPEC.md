@@ -119,7 +119,7 @@ almighty-sign-language/
   ```
   Also `{"type":"error","code":"bad_magic|too_large|decode_failed|...","detail":"..."}`.
 - Frames arriving while one is being processed **replace** the waiting frame (latest-only). Never queue more than one.
-- `conformance_test.py --url ws://localhost:8000/ws --token ...` checks auth rejection, health, a valid frame round trip, malformed input handling, oversized input, rapid-fire frames (latest-only behaviour), and reconnect. Both servers must pass it.
+- `conformance_test.py --url ws://localhost:8765/ws --token ...` checks auth rejection, health, a valid frame round trip, malformed input handling, oversized input, rapid-fire frames (latest-only behaviour), and reconnect. Both servers must pass it.
 
 ## 6. Data and recording format
 
@@ -141,7 +141,7 @@ almighty-sign-language/
 2. `cudaMemGetInfo`: refuse to start if free VRAM is below the budget (default: need at least 4 GB free, cap own usage at 10 GB; configurable in `server.json`).
 3. Load engines. If an engine is missing or was built for a different TensorRT version or GPU, log the exact `build_engines.ps1` command to fix it.
 4. Preallocate every buffer: pinned host staging, device frame buffers for max resolution, model I/O, ring buffer, nvJPEG state. **Zero allocations per frame** in steady state (assert this in debug builds with a counter).
-5. Start the WebSocket server on `127.0.0.1:8000` (configurable). It binds to localhost only, because the tunnel connects locally.
+5. Start the WebSocket server on `127.0.0.1:8765` (configurable). It binds to localhost only, because the tunnel connects locally.
 
 **Hot path performance rules**
 - No `cudaDeviceSynchronize`, `cudaMalloc`/`cudaFree`, or synchronous memcpy per frame. Use streams with events, `cudaMemcpyAsync` from pinned memory, and one tiny device-to-host copy at the end.

@@ -1,0 +1,4 @@
+# The fallback server runs inside training/.venv (shared with training); pinned versions live in
+# training/requirements.txt. Packages it needs from there:
+#   fastapi, uvicorn[standard], onnxruntime-gpu, numpy, opencv-python
+# Install: training\.venv\Scripts\python.exe -m pip install -r training\requirements.txt

@@ -85,7 +85,7 @@ A message with `flags` bit0 set signals the end of the stream. Its JPEG payload 
 ## Conformance
 
 ```
-python protocol/conformance_test.py --url ws://localhost:8000/ws --token <token>
+python protocol/conformance_test.py --url ws://localhost:8765/ws --token <token>
 ```
 
 Checks: auth rejection, health, valid frame round trip, malformed input, oversized input, rapid-fire frames (latest-only), and reconnect. Both servers must pass.
