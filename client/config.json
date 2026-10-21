@@ -1,5 +1,5 @@
 {
-  "url": "ws://127.0.0.1:8765/ws",
+  "url": "wss://signlang.dheynorlanda.me/ws",
   "width": 1280,
   "height": 720,
   "fps": 15,

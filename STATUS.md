@@ -37,7 +37,7 @@ Not verified / notes:
 - Engines are tied to this TensorRT version and GPU; rebuild after upgrading either.
 - `training/.venv` is the shared venv for training and the fallback server. The laptop client will get its own CPU-only requirements in Phase 2.
 
-## Phase 2: Protocol, client, fallback skeleton: PARTIAL (tunnel gates pending)
+## Phase 2: Protocol, client, fallback skeleton: DONE (2026-10-21)
 
 | Gate item | Command | Result |
 |---|---|---|
@@ -50,11 +50,22 @@ Not verified / notes:
 | Review/delete mode | real `recorder.review()` with simulated keys on a scratchpad copy | `n` next, `d`+`x` cancel (nothing deleted), `d`+`y` deleted the clip; real clips untouched |
 | SIGNLANG_TOKEN | `setx`, read back from HKCU | 43 URL-safe chars, stored as a user env var; never written to the repo |
 
-**NOT verified (blocked):**
-- Conformance and client **through the Cloudflare tunnel**: `cloudflared.exe` exists (`C:\Program Files (x86)\cloudflared\`) but no `cloudflared` Windows service is registered (`sc query cloudflared` -> error 1060), no process is running, and the public hostname was never provided (the instruction text still said `<YOUR_HOSTNAME>`). Nothing on the Cloudflare side was touched.
-- Interactive live window (overlay drawing) not exercised: no human at the screen; only headless mode was run. Review mode key handling was tested with simulated keys, not a real keyboard.
-- End-to-end client on a *separate* CPU-only laptop not yet run.
+Tunnel gates (hostname `signlang.dheynorlanda.me`, Windows service `cloudflared` RUNNING, route -> `http://localhost:8765`):
 
+| Gate item | Command | Result |
+|---|---|---|
+| Health through tunnel | `GET https://signlang.dheynorlanda.me/health` | HTTP 200 `{"ok":true,"server":"fallback","version":"0.1.0"}`; DNS resolves to Cloudflare edge IPs |
+| Conformance through tunnel | `conformance_test.py --url wss://signlang.dheynorlanda.me/ws` | **9/9 PASS**; rapid fire 60 sent / 38 processed / 22 dropped. Authorised tests passing proves the `Authorization` header survives the tunnel; 401 for missing/wrong token also arrives intact |
+| Client through tunnel | `client.py --url wss://signlang.dheynorlanda.me/ws --headless --duration 12 --width 640 --height 480` | 172 frames sent, 172 results, **RTT p50 55.2 ms / p95 61.8 ms / max 103.8 ms**, server total p50 3.5 ms |
+| Localhost regression after test change | conformance on `ws://127.0.0.1:8765/ws` | 9/9 PASS |
+
+First tunnel run failed 1 of 9: `/health` returned 403. Cause (verified): Cloudflare error 1010 blocks urllib's default `Python-urllib` User-Agent at the edge (server header `cloudflare`, request never reached the app); an explicit User-Agent returns 200. Fixed in the test, nothing changed on the Cloudflare side. The first `service install` attempts failed with a truncated token and then a non-admin shell; the user ran it from an admin shell.
+
+**Not verified:**
+- Interactive live window (overlay drawing): no human at the screen; only headless mode was run. Review-mode key handling was tested with simulated keys, not a real keyboard.
+- Client on a *separate* CPU-only laptop not yet run (the laptop needs `SIGNLANG_TOKEN` set and `pip install -r client/requirements.txt`).
+- The RTT above is PC -> Cloudflare edge -> PC, not laptop-to-laptop over a real network (that target, under 100 ms end to end, is measured in Phases 6/9).
+- Cloudflare dashboard flags the installed cloudflared (2025.8.1) as "Unsupported" (old). It works; update it if the tunnel misbehaves.
 Notes:
 - Webcam on this PC is the "A4tech PC Camera" at index 0, 640x480 max, and dim: ~36 distinct frames per 45 slots (~12 fps). Index 1 is the OBS Virtual Camera (not used).
 - Pacing bug found and fixed during testing: the first recorder waited for each camera frame, so a slow camera stretched clips to 4.2 s while `meta.json` claimed 15 fps. Now a capture thread supplies the newest frame at each 1/15 s tick, like live streaming; measured capture span 2.93 s for 45 frames.

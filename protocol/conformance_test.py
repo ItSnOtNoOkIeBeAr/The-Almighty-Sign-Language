@@ -77,7 +77,9 @@ def open_ws(ctx, token=None):
 
 @check("health: GET /health works without auth")
 def t_health(ctx):
-    with urllib.request.urlopen(ctx["health"], timeout=10) as r:
+    # Explicit User-Agent: Cloudflare blocks urllib's default "Python-urllib" signature (error 1010) at the edge.
+    req = urllib.request.Request(ctx["health"], headers={"User-Agent": "signlang-conformance/1.0"})
+    with urllib.request.urlopen(req, timeout=10) as r:
         body = json.loads(r.read())
     assert body["ok"] is True and body["server"] in ("cpp", "fallback") and body["version"], body
 

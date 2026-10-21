@@ -21,9 +21,9 @@ Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `D
 - The client runs on a CPU-only laptop: opencv-python, websockets, numpy only.
 
 ## Current phase
-Phases 0-1 done. Phase 2 PARTIAL: everything passes locally; BLOCKED on the Cloudflare tunnel (service not installed,
-hostname not given). Do not touch the tunnel token/config. After the tunnel gates pass: push, then Phase 3 (keypoint model
-selection) needs user approval before Phase 4.
+Phases 0-2 done. Next: Phase 3 (keypoint model selection) is a DECISION GATE: compare candidates, write the comparison
+in DECISIONS.md, then STOP and get user approval before Phase 4. Do not touch the tunnel token/config.
+Public URL: wss://signlang.dheynorlanda.me/ws (Windows service `cloudflared` -> http://localhost:8765).
 
 ## Tool locations
 - TensorRT: `C:\dev\TensorRT-10.16.1.11` (set `TENSORRT_ROOT`; put its `bin` on PATH to run exes). vcpkg: `C:\dev\vcpkg`.
@@ -38,6 +38,6 @@ selection) needs user approval before Phase 4.
 Server port: 127.0.0.1:8765. Token: user env var SIGNLANG_TOKEN (never in files/chat).
 - Fallback server: `training\.venv\Scripts\python server\fallback\fallback_server.py`  (open a NEW terminal after setx)
 - Conformance: `client\.venv\Scripts\python protocol\conformance_test.py --url ws://127.0.0.1:8765/ws`  (expects 9/9)
-- Client: `client\.venv\Scripts\python client\client.py [--headless --duration 10] [--url wss://<host>/ws]`; this PC's camera is 640x480: add `--width 640 --height 480`
+- Client: `client\.venv\Scripts\python client\client.py [--headless --duration 10] [--url ws://127.0.0.1:8765/ws for local; config default is the tunnel]`; this PC's camera is 640x480: add `--width 640 --height 480`
 - Record: `client.py --record <label> --signer <id>`; review: `client.py --review`
 
