@@ -1,0 +1,46 @@
+# Build output
+build/
+out/
+server/cpp/build/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+
+# Models and engines (large, machine-specific)
+*.onnx
+*.engine
+*.plan
+*.trt
+server/models/*
+!server/models/.gitkeep
+
+# Data and recordings
+data/*
+!data/.gitkeep
+*.npz
+*.npy
+runs/
+checkpoints/
+*.pt
+*.pth
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Tools / editors
+vcpkg_installed/
+.vs/
+.vscode/
+*.nsys-rep
+*.ncu-rep
+
+# Secrets
+.env
+*.token

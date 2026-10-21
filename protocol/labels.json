@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "labels": [
+    "idle",
+    "hello",
+    "hi",
+    "what",
+    "how",
+    "why",
+    "how_are_you",
+    "where_are_you"
+  ]
+}
