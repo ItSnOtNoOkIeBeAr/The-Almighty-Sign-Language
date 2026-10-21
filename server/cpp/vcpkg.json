@@ -1,0 +1,14 @@
+{
+  "name": "signlang-server",
+  "version": "0.1.0",
+  "builtin-baseline": "857036234d15fbed8f30fed66e898d7725446c0c",
+  "dependencies": [
+    {
+      "name": "ixwebsocket",
+      "default-features": false
+    },
+    "nlohmann-json",
+    "spdlog",
+    "gtest"
+  ]
+}

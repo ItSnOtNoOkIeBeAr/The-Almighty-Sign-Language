@@ -22,7 +22,12 @@ Created: section 4 layout, `.gitignore`, `CLAUDE.md`, `STATUS.md`, `DECISIONS.md
 Not verified: n/a.
 
 ## Phase 1: Dependencies: IN PROGRESS
-- Blocked: TensorRT zip must be downloaded by the user (NVIDIA login required).
+- Done: vcpkg at `C:\dev\vcpkg` (tool 2026-09-26), `vcpkg install --triplet x64-windows` succeeded for
+  ixwebsocket 12.0.1 (no SSL), nlohmann-json, spdlog 1.17.0, gtest.
+- Done: confirmed ixwebsocket can do 401-before-upgrade via a `WebSocketServer` subclass (see DECISIONS).
+- In progress: `training/.venv` (torch cu128, onnx, onnxruntime-gpu, fastapi, uvicorn, websockets, opencv, numpy).
+- Blocked: TensorRT not found on disk; the user must download it (NVIDIA login required).
+- Not yet verified: CMake link test (CUDA + nvJPEG + TensorRT), `trtexec` FP16 engine build, ORT on CUDAExecutionProvider.
 
 ## Placeholders
 None yet.

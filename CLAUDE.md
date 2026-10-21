@@ -22,6 +22,9 @@ Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `D
 
 ## Current phase
 Phase 0 done. Phase 1 (dependencies) in progress: blocked on the user downloading TensorRT.
+Next step: user gives the TensorRT unzip path -> verify version vs release notes -> CMake link test
+(CUDA + nvJPEG + TensorRT) -> trtexec FP16 engine -> check `training/.venv` (pip freeze, torch CUDA,
+ORT CUDAExecutionProvider) -> write training/requirements.txt -> commit Phase 1 gate.
 
 ## Build environment
 `cl`/`cmake`/`ninja` are not on the normal PATH. Scripts load the VS dev environment themselves via
