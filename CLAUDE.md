@@ -1,4 +1,4 @@
-# CLAUDE.md: The Almighty Sign Language
+﻿# CLAUDE.md: The Almighty Sign Language
 
 Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `DECISIONS.md`.
 
@@ -21,10 +21,13 @@ Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `D
 - The client runs on a CPU-only laptop: opencv-python, websockets, numpy only.
 
 ## Current phase
-Phase 0 done. Phase 1 (dependencies) in progress: blocked on the user downloading TensorRT.
-Next step: user gives the TensorRT unzip path -> verify version vs release notes -> CMake link test
-(CUDA + nvJPEG + TensorRT) -> trtexec FP16 engine -> check `training/.venv` (pip freeze, torch CUDA,
-ORT CUDAExecutionProvider) -> write training/requirements.txt -> commit Phase 1 gate.
+Phases 0 and 1 done. Next: Phase 2 (client with live view/overlay/record, fallback server with placeholder
+temporal model + dummy keypoint step, `protocol/conformance_test.py`). At the Phase 2 gate, ASK the user for
+the Cloudflare tunnel hostname (never the token).
+
+## Tool locations
+- TensorRT: `C:\dev\TensorRT-10.16.1.11` (set `TENSORRT_ROOT`; put its `bin` on PATH to run exes). vcpkg: `C:\dev\vcpkg`.
+- Python venv (training + fallback): `training\.venv`. Import `ort_cuda` before `onnxruntime`.
 
 ## Build environment
 `cl`/`cmake`/`ninja` are not on the normal PATH. Scripts load the VS dev environment themselves via
@@ -33,3 +36,4 @@ ORT CUDAExecutionProvider) -> write training/requirements.txt -> commit Phase 1 
 
 ## How to build and run
 (Filled in as phases land.)
+
