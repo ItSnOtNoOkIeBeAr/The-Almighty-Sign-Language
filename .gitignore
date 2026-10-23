@@ -44,3 +44,7 @@ vcpkg_installed/
 # Secrets
 .env
 *.token
+
+# Laptop setup guide embeds the real SIGNLANG_TOKEN. Never commit it.
+LAPTOP_SETUP.md
+laptop-setup/
