@@ -1,6 +1,6 @@
 # CLAUDE.md: The Almighty Sign Language
 
-Full spec: `BUILD_SPEC.md` (source of truth). Progress: `STATUS.md`. Choices: `DECISIONS.md`.
+Full spec: `governance/BUILD_SPEC.md` (source of truth). Progress: `governance/STATUS.md`. Choices: `governance/DECISIONS.md`.
 
 ## Rules (summary of BUILD_SPEC section 0)
 1. Verify, never assume. Each phase ends with a gate: run it, show the real output, then mark it done.

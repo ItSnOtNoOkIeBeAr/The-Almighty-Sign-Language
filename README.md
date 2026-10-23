@@ -6,7 +6,7 @@ which the laptop shows as an overlay.
 
 Vocabulary: idle, hello, hi, what, how, why, how_are_you, where_are_you.
 
-**Status:** under construction. See `STATUS.md`. Full setup instructions arrive in Phase 10.
+**Status:** under construction. See `governance/STATUS.md`. Full setup instructions arrive in Phase 10.
 
 - Protocol: `protocol/PROTOCOL.md`
-- Design spec: `BUILD_SPEC.md`
+- Design spec: `governance/BUILD_SPEC.md`

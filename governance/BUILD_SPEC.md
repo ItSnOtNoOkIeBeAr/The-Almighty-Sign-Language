@@ -75,7 +75,7 @@ The exact number of models in the keypoint stage is decided in Phase 3. Fewest m
 
 ```
 almighty-sign-language/
-  CLAUDE.md  STATUS.md  DECISIONS.md  README.md  BUILD_SPEC.md  .gitignore
+  CLAUDE.md  README.md  governance/{BUILD_SPEC,STATUS,DECISIONS}.md  .gitignore
   protocol/
     PROTOCOL.md          wire format (section 5), the contract for all components
     labels.json
