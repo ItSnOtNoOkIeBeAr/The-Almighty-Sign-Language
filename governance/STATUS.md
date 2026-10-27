@@ -93,8 +93,7 @@ Fix (client): flow control, `max_inflight` (default 3, 0 = off) in `client/confi
 | this PC via tunnel | 3 | flat | 102.7 / 110.4 / 120.0 | 0 |
 
 Not yet verified on the real laptop: the flow-control build has not been run there (needs `git pull` on the laptop).
-OPEN DECISION (user): final live stream settings (resolution / JPEG quality / fps). Clips must be recorded with the SAME settings
-(spec section 6), and the fps also sets how many frames a 3 s clip has versus the 45-frame window. Record NO real training clips until decided.
+DECIDED (Claude, user delegated): live stream = 640x360, JPEG q70, 10 fps, max_inflight 3 (~1.8 Mbit/s). PENDING laptop confirmation that RTT stays flat; fall back to 8 fps if p50 > 200 ms. Clips use the SAME settings (spec section 6): 3 s = 30 frames at 10 fps (the server's 45-frame window is revisited in Phase 7). Record real training clips only after the laptop confirms.
 ## Placeholders
 - `training/make_placeholder_model.py` / `server/models/temporal_placeholder.onnx`: random-weight GRU, recognises nothing (replaced in Phase 7).
 - `server/fallback/fallback_server.py`: dummy keypoint step (8x12 grayscale thumbnail = 96 features) and a decision step that never commits (real logic in Phase 8). Marked `PLACEHOLDER` in code.
