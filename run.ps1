@@ -1,10 +1,10 @@
 # Usage: .\run.ps1 [server|client|both|headless|test] [extra client args]
 #   server   fallback server on 127.0.0.1:8765
 #   client   webcam client against the server in client\config.json, i.e. the tunnel (default)
-#   headless 10 second client run without a window, same server
+#   headless 10 second client run without a window, same server (e.g. .\run.ps1 headless --duration 20)
 #   both     local server in a new window, then the client against it (needs training\.venv)
 #   test     protocol conformance test against the local server (expects 9/9)
-# Extra args go to the client, e.g. .\run.ps1 client --url ws://127.0.0.1:8765/ws
+# Resolution, fps and quality come from client\config.json. Extra args go to the client, e.g. .\run.ps1 client --url ws://127.0.0.1:8765/ws
 param(
     [ValidateSet('server', 'client', 'both', 'headless', 'test')]
     [string]$Mode = 'client',
@@ -26,7 +26,7 @@ if (-not $env:SIGNLANG_TOKEN) {
 
 function Start-Client($more, $url) {
     $urlArgs = if ($url) { @('--url', $url) } else { @() }
-    & $clientPy $client @urlArgs --width 640 --height 480 @more
+    & $clientPy $client @urlArgs @more
 }
 
 switch ($Mode) {
@@ -37,6 +37,6 @@ switch ($Mode) {
         Start-Sleep -Seconds 3
         Start-Client $ClientArgs $local
     }
-    'headless' { Start-Client @('--headless', '--duration', '10') }
+    'headless' { Start-Client (@('--headless', '--duration', '10') + $ClientArgs) }
     'test'     { & $clientPy (Join-Path $root 'protocol\conformance_test.py') --url $local }
 }
