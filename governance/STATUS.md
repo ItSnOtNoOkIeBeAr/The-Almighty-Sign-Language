@@ -71,6 +71,30 @@ Notes:
 - Pacing bug found and fixed during testing: the first recorder waited for each camera frame, so a slow camera stretched clips to 4.2 s while `meta.json` claimed 15 fps. Now a capture thread supplies the newest frame at each 1/15 s tick, like live streaming; measured capture span 2.93 s for 45 frames.
 - uvicorn logs a false ERROR after every correct 401 denial; filtered (see DECISIONS).
 
+## Phase 2 follow-up: laptop over real Wi-Fi (2026-10-27)
+
+Laptop (Killer Wi-Fi 6E AX1675i, Windows-reported link 14.4 Mbps) through the tunnel, 20 s headless runs, flags only:
+
+| Settings | Frame size | Sent / results | RTT p50 / p95 / max (ms) | Trend (first 5 -> last 5 rtt) |
+|---|---|---|---|---|
+| 1280x720, q80, 15 fps (config defaults) | 80.7 KB | 199 / 172 | 1421 / 4531 / 5765 | 403-848 -> 2812-2891 (**grows**) |
+| 640x360, q70, 15 fps | 22.4 KB | 200 / 175 | 455 / 623 / 738 | flat, ~500-700 |
+| 640x360, q70, 8 fps | 22.4 KB | 158 / 157 | 142 / 249 / 445 | flat, ~120-200 |
+
+Cause: the stream (80.7 KB x 15 = 9.7 Mbit/s) exceeds what the Wi-Fi uplink sustains, so frames queue in network buffers and RTT grows without bound. Server time stayed ~4-8 ms throughout, so the server is not involved. A first 8 fps attempt also hit a DNS error (`gaierror`): the laptop's network drops out now and then (reconnect logic handles it).
+
+Fix (client): flow control, `max_inflight` (default 3, 0 = off) in `client/config.json` / `--max-inflight`: skip sending while more than N frames are unanswered, with a 2 s escape hatch. Verified with a throttling proxy on this PC (60 KB/s, unbounded buffer, scratchpad `slowlink.py`, not in the repo):
+
+| Link | max_inflight | RTT first 5 -> last 5 (ms) | p50 / p95 / max (ms) | Skipped |
+|---|---|---|---|---|
+| 60 KB/s | 0 (old) | 115 -> 8637 | 4363 / 8419 / 8806 | 0 |
+| 60 KB/s | 3 (new) | 130 -> 243 | 330 / 416 / 434 | 130 |
+| localhost | 3 | flat | 5.6 / 8.5 / 17.0 | 0 |
+| this PC via tunnel | 3 | flat | 102.7 / 110.4 / 120.0 | 0 |
+
+Not yet verified on the real laptop: the flow-control build has not been run there (needs `git pull` on the laptop).
+OPEN DECISION (user): final live stream settings (resolution / JPEG quality / fps). Clips must be recorded with the SAME settings
+(spec section 6), and the fps also sets how many frames a 3 s clip has versus the 45-frame window. Record NO real training clips until decided.
 ## Placeholders
 - `training/make_placeholder_model.py` / `server/models/temporal_placeholder.onnx`: random-weight GRU, recognises nothing (replaced in Phase 7).
 - `server/fallback/fallback_server.py`: dummy keypoint step (8x12 grayscale thumbnail = 96 features) and a decision step that never commits (real logic in Phase 8). Marked `PLACEHOLDER` in code.

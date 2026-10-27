@@ -39,6 +39,11 @@ class Link:
         self.rtts, self.server_totals, self.labels = [], [], Counter()
         self.sent_times = deque(maxlen=30)
         self.n_results = 0
+        # Flow control: never queue frames the link can't carry. If more than max_inflight frames are
+        # unanswered we skip sending (0 disables). Without this a slow uplink builds a queue and the
+        # round-trip time grows without bound (seen on laptop Wi-Fi: 0.4 s -> 2.8 s in 20 s).
+        self.max_inflight = int(cfg.get("max_inflight", 3))
+        self.last_ack, self.last_progress, self.skipped = -1, time.time(), 0
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -51,7 +56,8 @@ class Link:
                 with connect(self.cfg["url"], additional_headers={"Authorization": f"Bearer {self.token}"},
                              max_size=None, open_timeout=10) as ws:
                     self.state, self.error, backoff = "connected", "", 1.0
-                    rx = threading.Thread(target=self._recv, args=(ws,), daemon=True)
+                    self.last_ack, self.last_progress = self.fid - 1, time.time()
+                    rx =threading.Thread(target=self._recv, args=(ws,), daemon=True)
                     rx.start()
                     self._send_loop(ws, rx)
             except InvalidStatus as e:
@@ -74,6 +80,11 @@ class Link:
                 raw = self.frame
             if raw is None:
                 continue
+            unanswered = self.fid - 1 - self.last_ack
+            # The 2 s escape hatch keeps a lost reply from freezing the stream forever.
+            if self.max_inflight and unanswered >= self.max_inflight and time.time() - self.last_progress < 2.0:
+                self.skipped += 1
+                continue
             jpeg = encode_jpeg(prepare_frame(raw, self.cfg), self.cfg["jpeg_quality"])
             self.sent[self.fid] = time.time()
             ws.send(pack_frame(self.fid, jpeg))
@@ -86,6 +97,8 @@ class Link:
         try:
             for raw in ws:
                 m = json.loads(raw)
+                if "frame_id" in m:  # results AND per-frame errors both count as an answer
+                    self.last_ack, self.last_progress = max(self.last_ack, m["frame_id"]), time.time()
                 if m.get("type") == "result":
                     t0 = self.sent.pop(m["frame_id"], None)
                     rtt = (time.time() - t0) * 1000 if t0 else None
@@ -122,8 +135,8 @@ def draw_overlay(img, link, disp_fps):
     put_text(img, f"RTT {rtt:.0f} ms" if rtt is not None else "RTT -", (10, 165), 0.6)
     put_text(img, f"server {sm.get('total', 0):.1f} ms (dec {sm.get('decode', 0):.1f} kp {sm.get('keypoints', 0):.1f} "
                   f"temp {sm.get('temporal', 0):.1f})", (10, 190), 0.55)
-    put_text(img, f"send {link.send_fps():.1f} fps | display {disp_fps:.0f} fps | dropped {r.get('dropped_frames', 0)}",
-             (10, 215), 0.55)
+    put_text(img, f"send {link.send_fps():.1f} fps | display {disp_fps:.0f} fps | server-dropped {r.get('dropped_frames', 0)}"
+                  f" | skipped {link.skipped}", (10, 215), 0.55)
 
 
 def run_live(cfg, token, headless, duration):
@@ -165,7 +178,8 @@ def run_live(cfg, token, headless, duration):
         rt = sorted(link.rtts)
         print("--- summary ---")
         print(f"state: {link.state} {link.error}".strip())
-        print(f"frames sent: {link.fid}   results: {link.n_results}   labels: {dict(link.labels)}")
+        print(f"frames sent: {link.fid}   results: {link.n_results}   skipped by flow control: {link.skipped}   "
+              f"labels: {dict(link.labels)}")
         if rt:
             print(f"round-trip ms: p50 {statistics.median(rt):.1f}  p95 {rt[int(0.95 * (len(rt) - 1))]:.1f}  max {rt[-1]:.1f}"
                   f"   | server total ms p50 {statistics.median(link.server_totals):.1f}")

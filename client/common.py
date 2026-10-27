@@ -26,13 +26,15 @@ def add_common_args(ap: argparse.ArgumentParser):
     ap.add_argument("--fps", type=float)
     ap.add_argument("--quality", type=int, help="JPEG quality 1-100")
     ap.add_argument("--camera", type=int, help="camera index")
+    ap.add_argument("--max-inflight", type=int, help="flow control: max unanswered frames before skipping (0 = off)")
     ap.add_argument("--headless", action="store_true", help="no window; log to the console")
 
 
 def load_config(args) -> dict:
     cfg = json.loads(Path(args.config).read_text())
     for key, val in (("url", args.url), ("width", args.width), ("height", args.height), ("fps", args.fps),
-                     ("jpeg_quality", args.quality), ("camera_index", args.camera)):
+                     ("jpeg_quality", args.quality), ("camera_index", args.camera),
+                     ("max_inflight", args.max_inflight)):
         if val is not None:
             cfg[key] = val
     return cfg
