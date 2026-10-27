@@ -4,5 +4,6 @@
   "height": 720,
   "fps": 15,
   "jpeg_quality": 80,
-  "camera_index": 0
+  "camera_index": 0,
+  "max_inflight": 3
 }
