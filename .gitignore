@@ -21,6 +21,7 @@ server/models/*
 # Data and recordings
 data/*
 !data/.gitkeep
+!data/raw/
 *.npz
 *.npy
 runs/
