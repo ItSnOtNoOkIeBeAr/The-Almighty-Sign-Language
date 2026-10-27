@@ -1,9 +1,9 @@
 {
   "url": "wss://signlang.dheynorlanda.me/ws",
-  "width": 1280,
-  "height": 720,
-  "fps": 15,
-  "jpeg_quality": 80,
+  "width": 640,
+  "height": 360,
+  "fps": 10,
+  "jpeg_quality": 70,
   "camera_index": 0,
   "max_inflight": 3
 }
