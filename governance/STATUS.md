@@ -100,3 +100,13 @@ DECIDED (Claude, user delegated): live stream = 640x360, JPEG q70, 10 fps, max_i
 
 ## Known issues
 - `cl`/`cmake` are only available after `vcvars64.bat`; handled by scripts.
+
+## Laptop check and first clips (2026-10-27)
+
+- Laptop client venv: Python 3.12.10, only numpy, opencv-python, websockets (no torch/onnxruntime/tensorrt). `SIGNLANG_TOKEN` set, length 43. Camera index 0: 640x480 (4:3), ~29.8 fps measured over 3 s.
+- Config pulled (`71deca6`); `/health` 200 through the tunnel. `run.ps1` fixed (config-driven, passes extra args).
+- 4:3 squash found: 640x360 stretched the 640x480 camera. Config changed to 640x480 (see DECISIONS).
+- 20 s headless runs over the tunnel with flow control: 640x360 10 fps p50 118 ms (flat); 640x360 8 fps p50 132 ms; 640x480 10 fps p50 447 / 136 / 132 / 465 ms (bimodal, never growing; skips 76 / 3 / 2 / 77). Wi-Fi variance, not frame size. Live overlay confirmed working by the user.
+- Server labels were not always `idle` (random placeholder model returned hello/how/hi).
+- Recorded 5 sample clips (signer `me`, 640x480, q70, 10 fps): hello, how, how_are_you, where_are_you, idle. Each 30 JPEGs, 30 distinct camera frames, ~28-32 KB per JPEG, no low-light warning. Stored in `data\raw` (gitignored) on the laptop; not in the repo.
+- Not yet verified: a stable p50 <= 200 ms on the laptop Wi-Fi; the clips have not been reviewed (`--review`).
