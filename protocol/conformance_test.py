@@ -22,7 +22,8 @@ from websockets.sync.client import connect
 
 MAGIC, HEADER = 0x534C4E47, struct.Struct("<IHHIQ")
 MAX_BYTES = 2 * 1024 * 1024
-LABELS = json.loads((Path(__file__).parent / "labels.json").read_text())["labels"]
+_LJ = json.loads((Path(__file__).parent / "labels.json").read_text())
+LABELS, SENTENCES = _LJ["labels"], _LJ.get("sentences", [])
 STATES = {"idle", "signing", "committed"}
 results = []
 
@@ -60,7 +61,7 @@ def expect_result(r, fid):
     assert r["label"] in LABELS, f"unknown label {r['label']}"
     assert 0.0 <= r["confidence"] <= 1.0
     assert r["state"] in STATES
-    assert r["committed_label"] is None or r["committed_label"] in LABELS
+    assert r["committed_label"] is None or r["committed_label"] in LABELS + SENTENCES
     assert {"decode", "keypoints", "temporal", "total"} <= set(r["server_ms"]), r["server_ms"]
     assert isinstance(r["dropped_frames"], int)
 

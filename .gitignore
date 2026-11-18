@@ -21,7 +21,8 @@ server/models/*
 # Data and recordings
 data/*
 !data/.gitkeep
-!data/raw/
+# No self-recorded clips are ever committed (they contain people's faces); data/raw is local scratch only.
+data/raw/
 *.npz
 *.npy
 runs/

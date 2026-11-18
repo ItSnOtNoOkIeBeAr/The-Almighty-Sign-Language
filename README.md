@@ -1,10 +1,11 @@
 # The Almighty Sign Language
 
 Real-time sign language recognition. A laptop webcam streams JPEG frames over a Cloudflare Tunnel to a
-PC with an RTX GPU. The PC recognizes signs with a C++/CUDA/TensorRT pipeline and sends back labels,
+PC with an RTX GPU. The PC recognizes signs (today with the Python fallback server; the C++/CUDA/TensorRT server follows) and sends back labels,
 which the laptop shows as an overlay.
 
-Vocabulary: idle, hello, hi, what, how, why, how_are_you, where_are_you.
+Vocabulary (ASL): hello, what, how, why, where, you (plus `none`). The sentences how_are_you and where_are_you are
+joined from the words (HOW then YOU; WHERE then YOU or YOU then WHERE) within 1.5 s.
 
 **Status:** under construction. See `governance/STATUS.md`. Full setup instructions arrive in Phase 10.
 

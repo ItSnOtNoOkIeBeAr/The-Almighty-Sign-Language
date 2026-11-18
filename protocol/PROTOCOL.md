@@ -46,10 +46,10 @@ All integers are **little-endian**.
  "dropped_frames":2}
 ```
 
-- `label`: one of `protocol/labels.json`.
+- `label`: one of `labels` in `protocol/labels.json` (the instantaneous prediction; `none` when idle or unsure).
 - `confidence`: smoothed probability of `label`, in `[0, 1]`.
 - `state`: `idle`, `signing` or `committed`.
-- `committed_label`: the label committed on this frame, otherwise `null`.
+- `committed_label`: the word or sentence committed on this frame (one of `labels` or `sentences` in `protocol/labels.json`, e.g. `hello` or `how_are_you`), otherwise `null`. At most one event per frame. `how`, `where` and `you` may be held up to 1500 ms waiting for a partner word before they are committed (BUILD_SPEC section 8).
 - `dropped_frames`: total frames on this connection that were replaced before processing (latest-only).
 - Servers may add extra fields (for example a debug `keypoints` field behind a flag). Clients must ignore unknown fields.
 

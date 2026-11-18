@@ -1,7 +1,8 @@
 """Creates the PLACEHOLDER temporal model: a correctly shaped GRU classifier with RANDOM weights.
 
 PLACEHOLDER: it recognises nothing. It exists so the whole pipeline runs before any data exists.
-Replaced by the trained model in Phase 7 (same I/O contract: x [1, 45, F] float32 -> logits [1, 8]).
+The trained SignNet (train.py / export_onnx.py) has the same I/O contract: x [1, 30, 233] float32 -> logits [1, 7];
+this file stays only as a smoke-test fixture for the servers.
 Usage: python make_placeholder_model.py [out.onnx] [frames] [feature_dim]
 """
 import json
@@ -28,8 +29,8 @@ class PlaceholderTemporal(nn.Module):
 
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "server" / "models" / "temporal_placeholder.onnx")
-    frames = int(sys.argv[2]) if len(sys.argv) > 2 else 45
-    feat = int(sys.argv[3]) if len(sys.argv) > 3 else 96
+    frames = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+    feat = int(sys.argv[3]) if len(sys.argv) > 3 else 233
     torch.manual_seed(0)
     # dynamo=False: the legacy exporter writes one self-contained file, which TensorRT's parser also likes.
     torch.onnx.export(PlaceholderTemporal(feat).eval(), torch.zeros(1, frames, feat), out,

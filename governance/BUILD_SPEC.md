@@ -24,10 +24,13 @@ You are building a real-time sign language recognition system on this Windows PC
 ## 1. Project summary
 
 - **What it does:** a laptop webcam streams video over a Cloudflare Tunnel to this PC. The PC recognizes signs on the GPU and sends back the label, which the laptop shows as an overlay.
-- **Vocabulary (8 classes, index order fixed):**
-  `0 idle, 1 hello, 2 hi, 3 what, 4 how, 5 why, 6 how_are_you, 7 where_are_you`.
-  The two sentences are whole-phrase classes, not word-by-word. `idle` means no sign. Labels live in `protocol/labels.json`, and every component reads them from there.
-- **Sign language** (ASL or FSL) is not decided yet. Nothing in the code may depend on it.
+- **Sign language: ASL** (decided 2026-11-18). Training data is public only (section 6).
+- **Vocabulary (7 classes, approved 2026-11-18; replaces the original 8 whole-phrase classes):**
+  `0 none, 1 hello, 2 what, 3 how, 4 why, 5 where, 6 you`.
+  - `none` (index 0) is **idle + other**: no sign, or any sign that is not one of the six words. Public data gives it the OTHER class (150 random other glosses) plus hands-down windows from the start and end of all clips.
+  - `hello` also covers "hi": ASL Citizen has no separate HI gloss and ASL uses one sign family for both.
+  - **Sentences are joined from words, not classified.** `how_are_you` = `how` then `you`; `where_are_you` = `where` then `you` or `you` then `where`, within 1500 ms (section 8). The classifier only knows single words.
+  Labels live in `protocol/labels.json`, and every component reads them from there.
 - **Primary runtime:** C++/CUDA only, with no Python at runtime and no Python-vs-CUDA benchmark anywhere.
 - **Python is allowed only for:** offline training and export, test and parity scripts, the laptop client, and the minimal fallback server.
 
@@ -123,6 +126,12 @@ almighty-sign-language/
 
 ## 6. Data and recording format
 
+**Data policy (decided 2026-11-18):**
+- **Public data only.** Training uses ASL Citizen (Microsoft Research; isolated ASL signs, 83,399 clips, 2,731 glosses, 52 signers, official signer-disjoint train/val/test split). Nobody records training data. The recorder below stays as a tool for test clips; the 5 laptop sample clips of 2026-10-27 were deleted (they showed no signing).
+- **Domain matching.** The data is crowd-sourced webcam video, our runtime input is the laptop stream. Every dataset clip is converted to the live format (640x480, JPEG q70, 10 fps) with the same `prepare_frame` + `encode_jpeg` as `client/common.py` before keypoint extraction (aspect ratio padded, never squashed), and training augments lighting, scale and background. Phase 3 and later evaluation use clips in this converted form.
+- **Live-check mode.** Because no own data is used for training, the live webcam is a sanity check only: a view-only mode (`client.py --live-check`, planned, not yet written) shows keypoints and predictions and saves nothing. It never produces training or validation data.
+- **License compliance** (`use.txt` in the zip = Microsoft Research License): non-commercial research use only; the data and any modification of it (videos, frames, extracted keypoints, keypoint drawings) are never distributed, so they stay under `data/public/` (gitignored) and out of `docs/`, reports and commits; personal data is not shared or used to contact anyone; a publication may not contain a substantial portion of the data; the original zip stays outside the repo (`C:\dev\Datasets`) and the extracted personal data is destroyed when the research is finished.
+
 - `client/recorder.py` (or `client.py --record <label> --signer <id>`): shows a countdown, then records a **3-second** clip at the live FPS and resolution, using the **same JPEG encoder and quality as live streaming**.
 - Each clip is a folder: `data/raw/<label>/<signer>_<YYYYmmdd-HHMMSS>/000.jpg ... 044.jpg` plus `meta.json` (`label, signer, fps, width, height, jpeg_quality, created`).
 - Recording routine shown on screen: hands down, then sign, then hands down.
@@ -171,18 +180,20 @@ almighty-sign-language/
 
 If a target is missed, profile with Nsight Systems or Compute, fix the top bottleneck, and record before and after numbers. Don't just report the miss.
 
-## 8. Decision logic (CPU, tiny, unit-tested)
+## 8. Decision logic (CPU, tiny, unit-tested; reference implementation `server/fallback/decision.py`)
 
-- Sliding window of 45 frames (configurable). Run the temporal model on every new frame, or every k frames (configurable).
-- Commit a label only after `M` consecutive smoothed predictions agree with confidence of at least `threshold` (defaults to tune: M=4, threshold=0.75).
-- **Prefix hold:** `how` is the start of `how_are_you`. When `how` wins, hold the commit until the hands return to idle or `hold_ms` (default 500 ms) passes, and prefer `how_are_you` if it wins during the hold. Apply the same rule to any other prefix pair found in the confusion matrix.
-- Cooldown after a commit (default 800 ms), so one sign never fires twice.
-- All parameters live in `server.json`. Tests feed synthetic probability sequences and check the committed outputs, including the prefix case and the double-fire case.
+- Sliding window of 30 frames = 3 s at 10 fps (configurable; set by the clip data, see Phase 7), run on every new frame. Frames are placed on a 100 ms grid from the client timestamps, so dropped frames do not stretch time.
+- **Idle gate (rule based):** a hand must be strictly visible in at least `gate_min` of the last `gate_frames` frames (defaults 2 of 5), otherwise the state is `idle`, nothing commits and the smoothing resets.
+- Smooth the probabilities (EMA, alpha 0.5-0.7). Commit a word only after `M` consecutive frames whose smoothed best non-`none` class agrees with confidence of at least `threshold` (M, threshold and alpha are tuned on the validation signers; current defaults M=4, threshold 0.5, alpha 0.7).
+- **Cooldown** after a commit (default 800 ms) and **re-fire protection**: a committed word stays "fired" until another word has been predicted for 3 frames, `none` for 8 frames, or the gate closes, so one sign never fires twice.
+- **Word joining:** `how` then `you` = `how_are_you`; `where` then `you`, or `you` then `where` = `where_are_you`. `how`, `where` and `you` are held up to `join_ms` (default 1500) for a partner, measured from the moment the first word stops being predicted, then emitted alone. At most one event per frame.
+- All parameters live in `server.json` (per profile overrides allowed). Tests feed synthetic probability sequences and check the committed outputs, including the join cases, a held sign (no double fire), the cooldown and the idle gate.
 
 ## 9. Training (Python, offline, GPU-resident)
 
 - `extract_keypoints.py`: turns recorded clips into keypoint sequences using the **same ONNX keypoint models and identical preprocessing** as runtime (onnxruntime-gpu). Later, the C++ exe gets an `--extract <clips_dir> <out_dir>` mode that writes the same format, and the final model is trained on C++-extracted keypoints so training matches runtime exactly.
 - `train.py`: load all sequences into VRAM. Augment on the GPU: random time shift, speed 0.8 to 1.2x via resampling, frame drop, keypoint jitter, small scale and rotation. Mirroring stays off by default, because it changes handedness. Use AMP (bf16), a GRU or small Transformer (record the choice), class weights for imbalance, and early stopping.
+- **Data:** ASL Citizen only (section 6), using its official split, which is already signer-disjoint (train 35 / val 6 / test 11 signers).
 - **Validation is held out by signer** (one signer never seen in training). Print and save per-class accuracy and a confusion matrix.
 - `export_onnx.py`: fixed input shape `[1, 45, F]`, opset compatible with the installed TensorRT, verify ONNX vs PyTorch outputs match within tolerance.
 - `make_placeholder_model.py`: creates a correctly shaped temporal ONNX model with random weights, so the full pipeline runs before any data exists. Mark it clearly as a placeholder everywhere it is used.
@@ -216,6 +227,12 @@ If a target is missed, profile with Nsight Systems or Compute, fix the top bottl
 
 ## 13. Phases and gates
 
+**Order changed 2026-11-18 (deadline Nov 28): Phases 7 and 8 come BEFORE Phases 4-6.** The real model and decision logic go into the
+Python fallback server first, so there is a working demo early. The C++/CUDA server (Phases 4, 5, 6) follows and reuses the same models,
+keypoint features and decision logic (`server/fallback/decision.py` is the reference for the C++ port; parity tests in Phase 6/8).
+Phase 3 (done, approved): primary RTMW-x(l) 384x288 on the full frame, TensorRT FP16; fallback RTMW-l-m 256x192; YOLOX-tiny optional and off by default.
+Trained weights stay local-only (dataset license). Real order now: 0, 1, 2, 3, 7, 8, 4, 5, 6, 9, 10.
+
 Do them in order. At each gate: run the listed checks, paste the real output summary, update `STATUS.md`, commit, then continue. If a gate fails, fix it before moving on.
 
 **Phase 0: Preflight and skeleton**
@@ -231,7 +248,7 @@ Client with live view, overlay and record mode. Fallback server using the placeh
 *Gate:* conformance passes against the fallback locally. The client round trip works locally. **Ask the user for the tunnel hostname**, then verify the client works through `wss://<hostname>/ws`.
 
 **Phase 3: Keypoint model selection (decision gate)**
-Research and test candidates that output **both hands (21 keypoints each) plus upper body**. Requirements: ONNX export or download, builds as a TensorRT FP16 engine on sm_120, a license that allows academic use, and the fewest models in the stage. Evaluate RTMPose/RTMW-style whole-body models with a person detector first. A MediaPipe-derived model is a backup only, and never runs as MediaPipe at runtime. For each candidate: run ORT on sample webcam frames, draw the keypoints, build the TRT engine, and compare TRT against ORT outputs.
+Research and test candidates that output **both hands (21 keypoints each) plus upper body**. Requirements: ONNX export or download, builds as a TensorRT FP16 engine on sm_120, a license that allows academic use, and the fewest models in the stage. Evaluate RTMPose/RTMW-style whole-body models with a person detector first. A MediaPipe-derived model is a backup only, and never runs as MediaPipe at runtime. For each candidate: run ORT on dataset clips converted to the live format (section 6) and on the live webcam preview (view only, nothing saved), draw the keypoints, build the TRT engine, and compare TRT against ORT outputs.
 *Gate:* write the comparison (accuracy on webcam frames, latency, model count, export problems) in `DECISIONS.md`. **Stop and get the user's approval** before continuing.
 
 **Phase 4: C++ server core**
@@ -248,7 +265,7 @@ TensorRT engine wrapper (load, bind, enqueueV3 on streams), all stages wired, pe
 
 **Phase 7: Training pipeline**
 Extract, dataset, train, export and engine build, on synthetic data first.
-*Gate:* the synthetic smoke test trains, exports, builds the engine, and loads in both servers. Then **tell the user it is time to record data** (target about 150 clips per class, all 3 signers, varied lighting, background, distance and clothing), and what the record command is.
+*Gate:* the synthetic smoke test trains, exports, builds the engine, and loads in both servers. Then train on the real public data (ASL Citizen, extracted keypoints). Nobody records data (section 6, data policy).
 
 **Phase 8: Decision logic**
 State machine with prefix hold and cooldown, plus unit tests.

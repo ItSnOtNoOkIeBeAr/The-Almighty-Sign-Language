@@ -18,8 +18,10 @@ for _d in (_CUDA_BIN, _TORCH_LIB):
 import onnxruntime as ort  # noqa: E402
 
 
-def make_session(model_path: str) -> "ort.InferenceSession":
-    sess = ort.InferenceSession(model_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+def make_session(model_path: str, tf32: bool = True) -> "ort.InferenceSession":
+    """tf32=False gives exact FP32 matmuls (default TF32 moves logits by ~4e-3; keypoint models do not care, the tiny temporal model
+    does not need it and exact numbers make parity checks meaningful)."""
+    sess = ort.InferenceSession(model_path, providers=[("CUDAExecutionProvider", {"use_tf32": "1" if tf32 else "0"}), "CPUExecutionProvider"])
     active = sess.get_providers()
     if active[0] != "CUDAExecutionProvider":
         raise RuntimeError(f"onnxruntime fell back to {active}; CUDA DLLs not found (looked in {_CUDA_BIN}, {_TORCH_LIB})")

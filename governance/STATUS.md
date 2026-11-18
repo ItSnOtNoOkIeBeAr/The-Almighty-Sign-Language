@@ -110,3 +110,73 @@ DECIDED (Claude, user delegated): live stream = 640x360, JPEG q70, 10 fps, max_i
 - Server labels were not always `idle` (random placeholder model returned hello/how/hi).
 - Recorded 5 sample clips (signer `me`, 640x480, q70, 10 fps): hello, how, how_are_you, where_are_you, idle. Each 30 JPEGs, 30 distinct camera frames, ~28-32 KB per JPEG, no low-light warning. Stored in `data\raw` (gitignored) on the laptop; not in the repo.
 - Not yet verified: a stable p50 <= 200 ms on the laptop Wi-Fi; the clips have not been reviewed (`--review`).
+
+## Step A: ASL, public data only (2026-11-18)
+- Done: BUILD_SPEC sections 1, 6, 8, 9 and Phases 3/7 updated (ASL, public data only, word-joined sentences, idle/other, domain matching, live-check mode planned, license compliance); DECISIONS entry; the 5 laptop clips deleted from `data/raw` (git will show them as deleted: they had been committed; 4 `test1_*` clips remain).
+- Not done: `protocol/labels.json` still the original 8 classes (see DECISIONS); `client.py --live-check` not written (PLACEHOLDER: spec only).
+
+## ASL Citizen data (2026-11-18)
+- Zip `C:\dev\Datasets\ASL_Citizen.zip` (45.9 GB): a full CRC test of all members passed (`zipfile.testzip()` found no bad member, 224 s). It holds 83,399 mp4, 3 split CSVs, `use.txt` (the README: Microsoft Research License, see DECISIONS Step A) and 3 folders. CSV header `Participant ID,Video file,Gloss,ASL-LEX Code`; 52 signers (train 35 / val 6 / test 11, no overlap), 2,731 glosses.
+- Selective extraction (`training/extract_asl_citizen.py`, seed 1234) into `data/public/asl_citizen/` (gitignored, checked with `git check-ignore`): 4,826 mp4, 2.86 GB. Each file's CRC32 was verified on read and against the zip directory; `manifest.csv` keeps the official split.
+
+| Gloss (class) | clips | signers | train / val / test | resolution | fps | frames median (min-max) |
+|---|---|---|---|---|---|---|
+| HELLO (hello) | 32 | 29 | 14 / 4 / 14 | 640x480 (31), 960x540 (1) | 30 / 29.97 | 65 (38-170) |
+| HOW1 + HOW2 (how) | 31 + 31 = 62 | 29 / 27 | 17+14 / 3+3 / 11+14 | 640x480 (59), 960x540 (3) | 30 / 29.97 / 29.92 | 72 / 57 |
+| WHAT1 + WHAT2 (what) | 32 + 31 = 63 | 27 / 26 | 16+15 / 3+4 / 13+12 | 640x480 (61), 960x540 (2) | 30 / 29.92 | 64 / 70 |
+| WHY (why) | 32 | 29 | 14 / 4 / 14 | 640x480 (31), 960x540 (1) | 30 / 29.92 | 68 (28-126) |
+| WHERE (where) | 31 | 29 | 14 / 4 / 13 | 640x480 (30), 960x540 (1) | 30 / 29.97 | 61 (24-158) |
+| YOU (you) | 31 | 30 | 15 / 4 / 12 | 640x480 (30), 960x540 (1) | 30 / 29.92 | 68 (21-160) |
+| OTHER: 150 random glosses (idle/other) | 4,575 | 50 | 2204 / 563 / 1808 | 640x480 (~96%), 960x540 | 30 / 29.97 | 75 (27-291) |
+
+- Every target has at least 31 clips from at least 26 signers (the bar was 20 clips / 8 signers), so Phase 3 continued without waiting. There is **no separate HI gloss** (nearest: HELLO, WAVE, GREET1/2). `how` and `what` each have two gloss variants (HOW1/2, WHAT1/2), both extracted into one class. **YOU is labelled `YOU`** (YOUR, YOURSELF, SHAMEONYOU, THANKYOU, ILOVEYOU and TENDYOUR also exist). OTHER excludes any gloss containing HELLO/HOW/WHAT/WHY/WHERE/YOU/WAVE/GREET. The val split has only ~3-4 clips per word, so word-level val numbers will be noisy (use val+test or signer-grouped cross-validation).
+- Clips are ~2 s of 30 fps video (median ~65 frames), i.e. ~22 frames at the 10 fps live rate; the 45-frame window in `server.json` is a placeholder to revisit in Phase 7.
+
+## Phase 3: keypoint model selection: DONE, AWAITING USER APPROVAL (2026-11-18)
+Full comparison, exact preprocessing, export problems and the recommendation are in DECISIONS "Phase 3". Verified:
+
+| Check | Command / file | Result |
+|---|---|---|
+| 5 pose + 2 detector candidates downloaded | `server/models/candidates/` (2.18 GB, gitignored) | all HTTP 200 |
+| ORT on GPU, 50 clips / 1399 frames, 16 detector x pose combos | `python training/phase3_eval.py ort` | tables in DECISIONS |
+| TRT FP16 engines on sm_120 | `trtexec --fp16`, 68-117 s each | 7/7 built (YOLOX-m only after the TopK patch) |
+| TRT vs ORT keypoints (64 crops) and boxes (16 frames) | `phase3_eval.py trtcmp`, `server/scripts/phase3_trt_compare.ps1` | mean ~0.4 px, p95 1.2-2.2 px, 0.16-3.6% of keypoints >5 px; boxes <= 0.65 px |
+| Drawings | `phase3_eval.py draw` | `data/public/asl_citizen/phase3/drawings/*.jpg` |
+
+Not verified: hand-detection accuracy against ground truth (no labels exist; proxies only); the live webcam check (image almost black, see DECISIONS); TensorRT inside the future C++ pipeline (Phases 5/6); end-to-end sign accuracy (Phase 7). `protocol/labels.json` is still the original 8 classes.
+New code: `training/{extract_asl_citizen,rtmw_ref,phase3_eval,phase3_live_view}.py`, `server/scripts/phase3_trt_compare.ps1`. PLACEHOLDER: none added.
+
+## Step 1: privacy check of recorded clips (2026-11-19)
+- `git log --all -- data/raw`: two commits, both on `main` and **both pushed** (`origin/main` = local `main` at `3452a31` when checked): `8b31393` (155 files: the 5 laptop clips `me_20261027-*`, which show the room and other people) and `3452a31` (184 files: the 4 `test1_*` clips). Cause: `.gitignore` had `!data/raw/`.
+- Done locally: all 9 clips deleted (339 files, shown as deletions in `git status`); `data/raw/` is now gitignored (`git check-ignore -v` confirms).
+- NOT done (user decides): history purge. Proposed commands (run from a fresh clone; `pip install git-filter-repo`):
+  ```
+  git clone --mirror https://github.com/ItSnOtNoOkIeBeAr/The-Almighty-Sign-Language.git backup.git      # safety copy first
+  git clone https://github.com/ItSnOtNoOkIeBeAr/The-Almighty-Sign-Language.git purge && cd purge
+  git filter-repo --invert-paths --path data/raw --path LAPTOP_SETUP.md      # LAPTOP_SETUP.md also held the real SIGNLANG_TOKEN
+  git remote add origin https://github.com/ItSnOtNoOkIeBeAr/The-Almighty-Sign-Language.git             # filter-repo removes the remote
+  git push origin --force --all
+  ```
+  Then everyone re-clones (old clones still hold the clips). GitHub may keep the old commits reachable by SHA and in forks until it garbage-collects (contact GitHub support to purge cached views). **Making the repo private also hides them from the public; do that now.** Rotating `SIGNLANG_TOKEN` is still advisable.
+
+## Phase 7: training: DONE (2026-11-19) and Phase 8: decision logic: DONE (2026-11-19)
+Details, numbers and every non-obvious choice: DECISIONS "Phase 7/8". Verified:
+
+| Check | Command | Result |
+|---|---|---|
+| Keypoints, both models | `python training/extract_keypoints.py` | 4,826 clips, 138,521 frames; shards verified (rows == index) |
+| Training, 8 seeds x 2 keypoint models | `python training/train.py --model <m> --seeds 8` | 1,315,015 params, ~1 min/seed |
+| **TEST signers, window level, deployed primary (RTMW-x 384x288)** | `python training/report_test.py --model rtmw_xl_384x288` | accuracy 0.848, **macro-F1 0.828** (533 windows, 11 signers); per-class recall none .951, hello .929, what .800, how .813, why .762, where .692, you .556 |
+| TEST, deployed fallback (RTMW-l-m 256x192) | same, `--model rtmw_lm_256x192` | accuracy 0.852, macro-F1 0.816; recall none .960, hello .786, what .880, how .893, why .595, where .615, you .667 |
+| End-to-end TEST replay (clips as 10 fps streams through features + model + decision), primary | `python training/replay_eval.py --model rtmw_xl_384x288 --tune` | words exactly right 73/103 (70.9%): hello 13/14, how 15/25, what 18/25, why 10/14, where 9/13, you 8/12; false triggers on 400 non-target glosses 15 (3.7%); sentences 8/33 (24%): how_are_you 3/11, where_are_you 5/22 |
+| same, fallback | `--model rtmw_lm_256x192` | words 70/103 (68.0%), false triggers 26/400 (6.5%), sentences 5/33 (15%) |
+| ONNX vs PyTorch | `python training/export_onnx.py --model <m> --out server/models/temporal_<profile>` | max logit diff 9e-6 (exact FP32), argmax 100%; TensorRT FP16 engine built, diff 0.004 / 0.011, GPU 0.475 ms |
+| Decision unit tests | `python -m unittest server/fallback/test_decision.py -v` (training venv) | 20/20 pass |
+| Conformance, real model, localhost | `client\.venv\Scripts\python protocol\conformance_test.py --url ws://127.0.0.1:8765/ws` | **9/9 PASS** (rapid fire 60 sent / 6 processed / 54 dropped) |
+| Conformance, real model, tunnel | same with `wss://signlang.dheynorlanda.me/ws` | **9/9 PASS** |
+| Server path == offline replay | `python training/server_replay_check.py` (32 test clips over WebSocket) | identical committed events on 32/32; exactly right 23/32 |
+| Server speed | `client.py --headless` (dark camera, so only timing is meaningful) | server total p50 22 ms; round trip p50 23 ms local, 73 ms / p95 127 ms through the tunnel |
+
+Not verified: behaviour on a real live webcam with real lighting (the live check, `docs/LIVE_CHECK.md`, is the next step and is the user's); the 100 ms laptop-to-laptop target on the real network (Phase 9); the C++ port of features/decision (Phase 6 parity); a test set with real sentences (the sentence streams are built by joining two clips of the same signer, 33 of them); per-word numbers rest on 12-25 test clips each, so they carry roughly +-10 points of noise.
+Placeholders: none left in the fallback server. `training/make_placeholder_model.py` stays only as a smoke-test fixture (`server/models/temporal_placeholder.onnx`, 7 classes, [1,30,233]). `client.py --live-check` is still only a spec idea (use `docs/LIVE_CHECK.md` with the normal client).
+New/changed code: `training/{extract_keypoints,signfeat,sign_data,sign_model,train,replay_eval,report_test,export_onnx,server_replay_check}.py`, `server/fallback/{decision,test_decision,fallback_server}.py`, `server/config/server.json`, `protocol/{labels.json,PROTOCOL.md,conformance_test.py}`, `docs/LIVE_CHECK.md`.

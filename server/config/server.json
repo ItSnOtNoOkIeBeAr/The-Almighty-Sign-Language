@@ -5,19 +5,47 @@
     "max_message_bytes": 2097152
   },
   "models": {
-    "temporal": "server/models/temporal_placeholder.onnx"
+    "default_profile": "primary",
+    "primary": {
+      "keypoint": "server/models/rtmw_x_384x288.onnx",
+      "keypoint_input_wh": [
+        288,
+        384
+      ],
+      "keypoint_thr": 1.9,
+      "temporal": "server/models/temporal_primary.onnx",
+      "hand_present_thr": 3.44
+    },
+    "fallback": {
+      "keypoint": "server/models/rtmw_l_m_256x192.onnx",
+      "keypoint_input_wh": [
+        192,
+        256
+      ],
+      "keypoint_thr": 0.3,
+      "temporal": "server/models/temporal_fallback.onnx",
+      "hand_present_thr": 0.56,
+      "decision": {
+        "commit_consecutive_M": 3
+      }
+    }
   },
   "window": {
-    "frames": 45,
-    "feature_dim": 96,
+    "frames": 30,
+    "feature_dim": 233,
+    "step_ms": 100,
     "run_every_k_frames": 1
   },
   "decision": {
-    "ema_alpha": 0.5,
+    "ema_alpha": 0.7,
     "commit_consecutive_M": 4,
-    "commit_threshold": 0.75,
-    "hold_ms": 500,
-    "cooldown_ms": 800
+    "commit_threshold": 0.5,
+    "cooldown_ms": 800,
+    "join_ms": 1500,
+    "gate_frames": 5,
+    "gate_min": 2,
+    "release_frames": 3,
+    "release_none_frames": 8
   },
   "vram": {
     "min_free_gb": 4,

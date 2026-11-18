@@ -1,12 +1,15 @@
 {
-  "version": 1,
+  "version": 2,
   "labels": [
-    "idle",
+    "none",
     "hello",
-    "hi",
     "what",
     "how",
     "why",
+    "where",
+    "you"
+  ],
+  "sentences": [
     "how_are_you",
     "where_are_you"
   ]
