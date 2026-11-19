@@ -34,4 +34,4 @@ Do not write it into any file, commit, chat or log. Do not touch any Cloudflare 
    ```
    Open a NEW terminal afterwards (`setx` only affects new terminals). Never paste it into a file or chat.
 5. Run: `client\.venv\Scripts\python client\client.py` (add `--width W --height H` if the camera is not 640x480).
-   The live-check procedure is in `docs/LIVE_CHECK.md`.
+   After setup, follow `docs/LAPTOP_LIVE_TEST.md` (preflight, latency run, the live test and results table).
