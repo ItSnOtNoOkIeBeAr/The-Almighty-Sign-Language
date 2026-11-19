@@ -47,6 +47,8 @@ vcpkg_installed/
 .env
 *.token
 
-# Laptop setup guide embeds the real SIGNLANG_TOKEN. Never commit it.
-LAPTOP_SETUP.md
+# LAPTOP_SETUP.md is committed again (2026-11-19) and holds NO secret: the token lives only in the SIGNLANG_TOKEN env var.
 laptop-setup/
+
+# Server logs written by start_server.ps1 / start_fallback.ps1
+logs/

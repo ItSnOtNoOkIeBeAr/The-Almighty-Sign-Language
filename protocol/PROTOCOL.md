@@ -25,7 +25,7 @@ All integers are **little-endian**.
 |--------|--------|----------------|-------|
 | 0      | uint32 | `magic`        | `0x534C4E47` ("SLNG") |
 | 4      | uint16 | `version`      | `1` |
-| 6      | uint16 | `flags`        | bit0 = `end_of_stream` |
+| 6      | uint16 | `flags`        | bit0 = `end_of_stream`, bit1 = `want_keypoints` (debug view, see below) |
 | 8      | uint32 | `frame_id`     | monotonic per connection |
 | 12     | uint64 | `client_ts_us` | client timestamp, microseconds |
 | 20     | bytes  | JPEG payload   | rest of the message |
@@ -43,7 +43,7 @@ All integers are **little-endian**.
 {"type":"result","frame_id":123,"label":"hello","confidence":0.94,
  "state":"idle|signing|committed","committed_label":"hello",
  "server_ms":{"decode":1.2,"keypoints":6.1,"temporal":0.8,"total":9.0},
- "dropped_frames":2}
+ "dropped_frames":2,"profile":"primary"}
 ```
 
 - `label`: one of `labels` in `protocol/labels.json` (the instantaneous prediction; `none` when idle or unsure).
@@ -51,7 +51,9 @@ All integers are **little-endian**.
 - `state`: `idle`, `signing` or `committed`.
 - `committed_label`: the word or sentence committed on this frame (one of `labels` or `sentences` in `protocol/labels.json`, e.g. `hello` or `how_are_you`), otherwise `null`. At most one event per frame. `how`, `where` and `you` may be held up to 1500 ms waiting for a partner word before they are committed (BUILD_SPEC section 8).
 - `dropped_frames`: total frames on this connection that were replaced before processing (latest-only).
-- Servers may add extra fields (for example a debug `keypoints` field behind a flag). Clients must ignore unknown fields.
+- `profile`: which keypoint model produced the result: `primary` (RTMW-x 384x288) or `fallback` (RTMW-l-m 256x192; the server is in safe mode or has degraded).
+- `keypoints` (only when the frame had flags bit1 set): `{"w":640,"h":480,"thr":1.9,"pts":[[index,x,y,score],...]}` with x, y in pixels of the frame that was sent and `index` the COCO-WholeBody index: body 0-12 and both hands 91-132. Points scoring below `thr` are unreliable guesses; a client should not draw them.
+- Servers may add extra fields. Clients must ignore unknown fields.
 
 ### Error
 
@@ -89,3 +91,9 @@ python protocol/conformance_test.py --url ws://localhost:8765/ws --token <token>
 ```
 
 Checks: auth rejection, health, valid frame round trip, malformed input, oversized input, rapid-fire frames (latest-only), and reconnect. Both servers must pass.
+
+## Connection rules of the C++ server (hardening)
+
+- The whole HTTP request must arrive within 5 s (`net.handshake_timeout_ms`), else `408` and close. Headers above 16 KB get `431`. `Sec-WebSocket-Version` must be `13` (else `426`). At most `net.max_connections` (64) connections are served; more get `503`.
+- WebSocket framing is strict RFC 6455: client frames must be masked, no reserved bits, opcodes 0, 1, 2, 8, 9, 10 only, control frames at most 125 bytes and unfragmented. Any violation closes the connection with status 1002 (protocol error); a frame or message that declares more than 64 MB is refused with 1009 without being read. Messages between 2 MB and 64 MB are drained and answered with `too_large`, the connection stays open.
+- Ping gets a pong with the same payload; a close frame is echoed and the connection ends.

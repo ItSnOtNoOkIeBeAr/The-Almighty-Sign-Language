@@ -8,6 +8,8 @@
     "default_profile": "primary",
     "primary": {
       "keypoint": "server/models/rtmw_x_384x288.onnx",
+      "keypoint_engine": "server/models/keypoint_primary.engine",
+      "temporal_engine": "server/models/temporal_primary.engine",
       "keypoint_input_wh": [
         288,
         384
@@ -18,6 +20,8 @@
     },
     "fallback": {
       "keypoint": "server/models/rtmw_l_m_256x192.onnx",
+      "keypoint_engine": "server/models/keypoint_fallback.engine",
+      "temporal_engine": "server/models/temporal_fallback.engine",
       "keypoint_input_wh": [
         192,
         256
@@ -46,6 +50,12 @@
     "gate_min": 2,
     "release_frames": 3,
     "release_none_frames": 8
+  },
+  "degrade": {
+    "enabled": true,
+    "latency_ms": 80,
+    "frames": 30,
+    "min_free_vram_gb": 1.0
   },
   "vram": {
     "min_free_gb": 4,

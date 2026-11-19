@@ -1,6 +1,6 @@
 """Laptop client: webcam -> JPEG -> WebSocket -> label overlay. CPU only (opencv, websockets, numpy).
 
-  python client/client.py [--url wss://<host>/ws]       live view (q or Esc quits); token from SIGNLANG_TOKEN
+  python client/client.py [--url wss://<host>/ws]       live view (q or Esc quits, k = keypoints, d = details); token from SIGNLANG_TOKEN
   python client/client.py --headless --duration 10      no window, prints results + latency summary
   python client/client.py --record hello --signer s1    record a 3 s clip (see recorder.py)
   python client/client.py --review [--label hello]      replay / delete recorded clips
@@ -21,7 +21,8 @@ from websockets.exceptions import InvalidStatus
 from websockets.sync.client import connect
 
 import recorder
-from common import (add_common_args, encode_jpeg, load_config, open_camera, pack_frame, prepare_frame, put_text)
+from common import add_common_args, encode_jpeg, load_config, open_camera, pack_frame, prepare_frame
+from overlay import draw_overlay
 
 
 class Link:
@@ -44,6 +45,9 @@ class Link:
         # round-trip time grows without bound (seen on laptop Wi-Fi: 0.4 s -> 2.8 s in 20 s).
         self.max_inflight = int(cfg.get("max_inflight", 3))
         self.last_ack, self.last_progress, self.skipped = -1, time.time(), 0
+        self.want_kp = False         # ask the server for debug keypoints (key k); costs ~1.5 kB per reply
+        self.kp = None               # newest keypoints message: {"w", "h", "thr", "pts": [[index, x, y, score], ...]}
+        self.last_commit = None      # (word or sentence, time) of the newest committed event, for the big banner
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -87,7 +91,7 @@ class Link:
                 continue
             jpeg = encode_jpeg(prepare_frame(raw, self.cfg), self.cfg["jpeg_quality"])
             self.sent[self.fid] = time.time()
-            ws.send(pack_frame(self.fid, jpeg))
+            ws.send(pack_frame(self.fid, jpeg, flags=2 if self.want_kp else 0))  # flags bit1 = send debug keypoints
             self.fid += 1
             self.sent_times.append(time.time())
             for old in [k for k in self.sent if k < self.fid - 300]:
@@ -107,8 +111,10 @@ class Link:
                         self.rtts.append(rtt)
                     self.server_totals.append(m["server_ms"]["total"])
                     self.labels[m["label"]] += 1
+                    self.kp = m.get("keypoints") if self.want_kp else None
                     if m.get("committed_label"):
                         self.history.append(m["committed_label"])
+                        self.last_commit = (m["committed_label"], time.time())
                 elif m.get("type") == "error":
                     self.error = f"server error: {m['code']}"
         except Exception:  # noqa: BLE001 - closed socket ends the thread; sender notices rx is dead
@@ -119,30 +125,11 @@ class Link:
         return (len(t) - 1) / (t[-1] - t[0]) if len(t) > 2 and t[-1] > t[0] else 0.0
 
 
-def draw_overlay(img, link, disp_fps):
-    r = link.result or {}
-    ok = link.state == "connected"
-    put_text(img, f"{link.state}" + (f"  [{link.error}]" if link.error else ""), (10, 24), 0.6,
-             (0, 255, 0) if ok else (0, 165, 255))
-    put_text(img, f"{r.get('label', '-')}", (10, 70), 1.4, (255, 255, 255), 3)
-    conf = float(r.get("confidence", 0.0))
-    cv2.rectangle(img, (10, 85), (260, 105), (60, 60, 60), -1)
-    cv2.rectangle(img, (10, 85), (10 + int(250 * conf), 105), (0, 200, 0), -1)
-    put_text(img, f"{conf * 100:.0f}%  state: {r.get('state', '-')}", (270, 102), 0.55)
-    put_text(img, "committed: " + (" > ".join(link.history) or "-"), (10, 135), 0.6, (0, 255, 255))
-    sm = r.get("server_ms", {})
-    rtt = r.get("rtt_ms")
-    put_text(img, f"RTT {rtt:.0f} ms" if rtt is not None else "RTT -", (10, 165), 0.6)
-    put_text(img, f"server {sm.get('total', 0):.1f} ms (dec {sm.get('decode', 0):.1f} kp {sm.get('keypoints', 0):.1f} "
-                  f"temp {sm.get('temporal', 0):.1f})", (10, 190), 0.55)
-    put_text(img, f"send {link.send_fps():.1f} fps | display {disp_fps:.0f} fps | server-dropped {r.get('dropped_frames', 0)}"
-                  f" | skipped {link.skipped}", (10, 215), 0.55)
-
-
 def run_live(cfg, token, headless, duration):
     link, cap = Link(cfg, token), open_camera(cfg)
     link.start()
     t_start, last_n, shown, disp_fps, t_prev = time.time(), 0, 0, 0.0, time.time()
+    details = False
     try:
         while True:
             ok, frame = cap.read()
@@ -166,10 +153,16 @@ def run_live(cfg, token, headless, duration):
                 img = prepare_frame(frame, cfg).copy()
                 if img.shape[1] > 960:  # keep the preview a sane size on small screens
                     img = cv2.resize(img, (960, int(img.shape[0] * 960 / img.shape[1])))
-                draw_overlay(img, link, disp_fps)
+                draw_overlay(img, link, disp_fps, details)
                 cv2.imshow("The Almighty Sign Language", img)
-                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
                     break
+                if key == ord("k"):
+                    link.want_kp = not link.want_kp  # the server only sends keypoints while this is on
+                    link.kp = None
+                elif key == ord("d"):
+                    details = not details
     finally:
         link.stop.set()
         cap.release()

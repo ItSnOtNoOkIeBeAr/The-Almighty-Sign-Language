@@ -50,6 +50,7 @@ class Engine:
     """Shared ORT sessions. Per-connection state lives in ConnState so clients never mix windows."""
 
     def __init__(self, profile):
+        self.profile = profile
         m = CFG["models"][profile]
         self.kp = ort_cuda.make_session(str(ROOT / m["keypoint"]))      # raises if CPU-only
         self.temporal = ort_cuda.make_session(str(ROOT / m["temporal"]), tf32=False)  # exact FP32: the logits match PyTorch to 1e-5
@@ -60,7 +61,7 @@ class Engine:
         for _ in range(2):  # warm-up
             self.process(ConnState(self.decision_cfg), cv2.imencode(".jpg", blank)[1].tobytes(), 0)
 
-    def process(self, st: "ConnState", jpeg: bytes, ts_ms: float) -> dict:
+    def process(self, st: "ConnState", jpeg: bytes, ts_ms: float, want_kp: bool = False) -> dict:
         t0 = time.perf_counter()
         img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
@@ -80,11 +81,15 @@ class Engine:
         probs /= probs.sum()
         t3 = time.perf_counter()
         label, conf, state, committed = st.decision.step(probs.tolist(), bool(flags[3] or flags[4]), st.t_last)  # strict presence drives the idle gate
-        return {
-            "type": "result", "label": label, "confidence": conf, "state": state, "committed_label": committed,
+        res = {
+            "type": "result", "label": label, "confidence": conf, "state": state, "committed_label": committed, "profile": self.profile,
             "server_ms": {"decode": round((t1 - t0) * 1e3, 2), "keypoints": round((t2 - t1) * 1e3, 2),
                           "temporal": round((t3 - t2) * 1e3, 2), "total": round((t3 - t0) * 1e3, 2)},
         }
+        if want_kp:  # debug view, same format as the C++ server: body 0-12 and both hands 91-132 as [index, x, y, score]
+            res["keypoints"] = {"w": w, "h": h, "thr": float(self.thr),
+                                "pts": [[i, round(float(kpt[i][0]), 2), round(float(kpt[i][1]), 2), round(float(score[i]), 2)] for i in list(range(13)) + list(range(91, 133))]}
+        return res
 
 
 class ConnState:
@@ -179,9 +184,9 @@ async def ws_endpoint(ws: WebSocket):
             item, slot = slot, None
             if item is None:
                 continue
-            fid, payload, eos, ts_ms = item
+            fid, payload, eos, ts_ms, want_kp = item
             try:
-                res = await loop.run_in_executor(None, engine.process, st, payload, ts_ms)
+                res = await loop.run_in_executor(None, engine.process, st, payload, ts_ms, want_kp)
                 await send({**res, "frame_id": fid, "dropped_frames": st.dropped})
             except DecodeError as e:
                 await send({"type": "error", "code": "decode_failed", "detail": str(e), "frame_id": fid})
@@ -211,7 +216,7 @@ async def ws_endpoint(ws: WebSocket):
             else:
                 if slot is not None:
                     st.dropped += 1  # latest-only: the waiting frame is replaced, never queued
-                slot = (fid, payload, bool(flags & 1), ts_ms)
+                slot = (fid, payload, bool(flags & 1), ts_ms, bool(flags & 2))
                 wake.set()
     finally:
         task.cancel()

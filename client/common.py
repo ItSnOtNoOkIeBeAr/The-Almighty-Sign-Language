@@ -101,5 +101,11 @@ def pack_frame(frame_id: int, jpeg: bytes, flags: int = 0) -> bytes:
 
 def put_text(img, text, org, scale=0.6, color=(255, 255, 255), thick=1):
     """Text with a dark outline so it stays readable on any background."""
-    cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+    # The outline is the same text at the same thickness, shifted by 1-2 px in 8 directions. (A thicker black stroke looked
+    # simpler but OpenCV 5 spaces glyphs differently per thickness, so outline and fill did not line up and the text looked doubled.)
+    r = 2 if scale >= 0.9 else 1
+    for dx in (-r, 0, r):
+        for dy in (-r, 0, r):
+            if dx or dy:
+                cv2.putText(img, text, (org[0] + dx, org[1] + dy), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick, cv2.LINE_AA)
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick, cv2.LINE_AA)
