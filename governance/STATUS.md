@@ -266,3 +266,6 @@ The Phase 10 gate ("a fresh clone builds and runs from the README alone") was NO
 1. Commit (file list in the report) and send the laptop live-check table; nothing is tuned until then.
 2. Optional: enable GPU performance counters (reboot) and run `server\scripts\profile_kernels.ps1` for the Nsight Compute numbers.
 3. Laptop-to-laptop latency run (command above).
+
+### Step 3 update (2026-11-19, later): Nsight Compute measured
+Run by the user from an administrator shell (`server\scripts\profile_kernels.ps1`). Preprocess kernel: 3.33 us, memory throughput 31.2% of peak (135 GB/s, DRAM 31.2%, L1/TEX 29.1%, L2 18.8%), compute 27.2%, achieved occupancy 54.0% (theoretical 100%), 192 blocks x 256 threads, 29 registers, 0.89 waves per SM. SimCC decode kernel: 5.22 us, memory 21.8% (95 GB/s), compute 19.9%, achieved occupancy 57.8%, 133 blocks, 24 registers, 0.62 waves. Top limiter for both: the grid is too small to fill the GPU (< 1 wave), i.e. launch/latency bound, not bandwidth or compute bound. Estimated speedups are 10-16% of a few microseconds; nothing optimised (not clearly wrong, ~5 ms per frame). The earlier "runs from L2, above DRAM peak" estimate was imprecise: DRAM is at 31% / 22%, most traffic is served by L2. Step 3 is therefore DONE; the pending user action 2 above is closed.

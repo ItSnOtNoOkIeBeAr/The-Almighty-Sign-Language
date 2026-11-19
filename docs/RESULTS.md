@@ -118,7 +118,18 @@ All on the PC, 640x480 frames. Per-stage server time, `signlang_server.exe --ben
 Targets from the spec: decode ~3 ms, keypoints ~12 ms, temporal ~1 ms, total ~20 ms; all met. Commands: `signlang_server.exe --bench 500 training\runs\bench_frame.jpg` and `... --profile fallback --bench 500 ...` (one 640x480 live-format frame, 500 frames after 20 warm-up). VRAM in use by the server about 0.26 GB (both profiles loaded; GPU total in use incl. other programs 2.2 GB).
 
 Single kernels (Nsight Systems, `nsys profile ... signlang_server.exe --bench 300 frame.jpg`, 323 launches): fused preprocess 2.8 us median (spec target < 500 us), SimCC decode 3.4 us. The rest of the GPU time is TensorRT's own kernels.
-Nsight Compute (memory throughput, occupancy): **not measured**: Windows blocks GPU performance counters for non-administrators (`ERR_NVGPUCTRPERM`). Run `server\scripts\profile_kernels.ps1` after enabling counter access (instructions in the script header); it prints duration, memory throughput (% of peak), achieved occupancy and optimisation hints. Estimate only, not a measurement: the preprocess kernel moves about 0.9 MB in and 1.3 MB out in 2.8 us, above the 448 GB/s DRAM peak, so it runs from the L2 cache and is latency-bound.
+Nsight Compute, full metric set, one launch each (`server\scripts\profile_kernels.ps1`, run from an administrator shell; full reports in `training/runs/ncu_*.txt`, gitignored):
+
+| Metric | fused preprocess kernel | SimCC decode kernel |
+|---|---|---|
+| Duration | 3.33 us | 5.22 us |
+| Memory throughput (% of peak) | 31.2% (135 GB/s; DRAM 31.2%, L1/TEX 29.1%, L2 18.8%) | 21.8% (95 GB/s; L1/TEX 16.2%, L2 8.1%) |
+| Compute (SM) throughput | 27.2% | 19.9% |
+| Achieved occupancy (theoretical 100%) | 54.0% | 57.8% |
+| Launch | 192 blocks x 256 threads, 29 registers, 0.89 waves per SM | 133 blocks x 256 threads, 24 registers, 0.62 waves per SM |
+| Top limiter (Nsight's own wording) | "grid too small to fill the available resources" (< 1 wave) | same (0.62 waves); work per block is uneven |
+
+Reading it: neither kernel is limited by memory bandwidth or compute (both well under 50% of peak); each is a tiny single-wave launch that finishes in a few microseconds, so what is left is launch/latency overhead. Nsight lists "estimated speedups" of 10-16% of a 3-5 us kernel, i.e. fractions of a microsecond out of a ~5 ms frame, so nothing was optimised (the brief: only if clearly wrong). Durations under Nsight Compute (locked clocks) are a little longer than the 2.8 / 3.4 us seen in Nsight Systems during normal running. Correction of an earlier remark in STATUS: the kernels do not exceed the DRAM peak; DRAM throughput is 31% / 22%, consistent with most traffic being served from the L2 cache.
 Reference: the Python fallback server needs about 22 ms per frame (`client.py --headless`, "server total ms").
 Export checks: SignNet ONNX vs PyTorch max logit difference 9e-6 (`training/export_onnx.py`); TensorRT FP16 vs ONNX Runtime 0.004-0.011, 0.475 ms GPU time.
 
@@ -165,5 +176,5 @@ Tier-1 degrade: if the server's time per frame stays above 80 ms for 30 frames, 
 - **Sentences work for 24% of synthetic joins.** `how`, `where` and `you` wait up to 1.5 s for a partner word, so they appear up to 1.5 s late.
 - Trained on isolated-sign studio-style webcam clips of 52 signers; lighting, background and signing style outside that range will hurt. Left-handed signers are not modelled specially. ASL only, 6 words.
 - Individual low-confidence keypoints are not masked (only whole hands are): see `governance/STATUS.md`, "Step 2". Fixing it needs retraining and was deliberately not done before the live check.
-- Not measured: laptop-to-laptop latency on a real network in demo conditions (the client prints it; see `docs/DEMO_CHECKLIST.md`); the live-check accuracy; Nsight Compute counters unless filled in above; CUDA Graph (not implemented: ~4.7 ms per frame leaves little to gain).
+- Not measured: laptop-to-laptop latency on a real network in demo conditions (the client prints it; see `docs/DEMO_CHECKLIST.md`); the live-check accuracy; CUDA Graph (not implemented: ~4.7 ms per frame leaves little to gain).
 - Tunnel drop: reconnection is tested by restarting the server under a running client; restarting the Cloudflare service itself needs administrator rights and was not done.
