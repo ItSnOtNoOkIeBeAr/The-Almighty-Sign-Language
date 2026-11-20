@@ -14,6 +14,7 @@ SENTENCE_TEXT = {"how_are_you": "HOW ARE YOU?", "where_are_you": "WHERE ARE YOU?
 # COCO-WholeBody indices the server sends: body 0-12 and both hands 91-132. Only the arms are drawn:
 # shoulders 5/6, elbows 7/8, wrists 9/10 (no face points 0-4, no hips 11/12).
 ARM_IDS = [5, 6, 7, 8, 9, 10]
+ARM_SIDES = [(5, 7, 9), (6, 8, 10)]  # (shoulder, elbow, wrist) per side; each side is drawn whole or not at all
 BODY_BONES = [(0, 1), (0, 2), (2, 4), (1, 3), (3, 5)]  # positions in ARM_IDS (like HAND_BONES: positions in a hand's 21 ids)
 HAND_BONES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0, 9), (9, 10), (10, 11), (11, 12),
               (0, 13), (13, 14), (14, 15), (15, 16), (0, 17), (17, 18), (18, 19), (19, 20)]
@@ -58,6 +59,13 @@ class Smoother:
     def __init__(self):
         self.pos, self.seen, self.msg, self.target, self.last = {}, {}, None, {}, None
 
+    def _seen_arm(self, i, scores, w, h):
+        """True if the arm joint i has a confident position that is inside the frame (not a clamped guess)."""
+        if i not in self.target:
+            return False
+        x, y = self.target[i]
+        return scores[i] >= ARM_MIN_SCORE and EDGE_PX < x < w - EDGE_PX and EDGE_PX < y < h - EDGE_PX
+
     def update(self, kp, now):
         if not kp:
             self.pos.clear(), self.seen.clear()
@@ -68,11 +76,10 @@ class Smoother:
             self.msg = kp
             self.target = {int(i): (x, y) for i, x, y, s in kp["pts"] if s >= thr and x >= 0}
             scores, w, h = {int(i): s for i, _, _, s in kp["pts"]}, kp["w"], kp["h"]
-            for i in ARM_IDS:  # an arm that is out of view gets guessed joints at the frame edge: hide those
-                if i in self.target:
-                    x, y = self.target[i]
-                    if scores[i] < ARM_MIN_SCORE or not (EDGE_PX < x < w - EDGE_PX and EDGE_PX < y < h - EDGE_PX):
-                        del self.target[i]
+            for side in ARM_SIDES:  # a whole side is shown or hidden: an arm that is out of view gets guessed joints
+                if not all(self._seen_arm(i, scores, w, h) for i in side[1:]):  # elbow and wrist must really be seen
+                    for i in side:
+                        self.target.pop(i, None)
             self.target = drop_ghost_hand(self.target, scores)
             for i in self.target:
                 self.seen[i] = now
