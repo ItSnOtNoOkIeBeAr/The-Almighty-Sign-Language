@@ -1,6 +1,8 @@
 """Laptop client: webcam -> JPEG -> WebSocket -> label overlay. CPU only (opencv, websockets, numpy).
 
-  python client/client.py [--url wss://<host>/ws]       live view (q or Esc quits, k = toggle skeleton (on by default), d = details); token from SIGNLANG_TOKEN
+  python client/client.py [--url wss://<host>/ws]       Home screen: pick a word to see how it is signed, or Free cam (m = back to Home, q quits;
+                                                        in Free cam k = toggle skeleton (on by default), d = details); token from SIGNLANG_TOKEN
+  python client/client.py --free-cam                    skip the Home screen
   python client/client.py --headless --duration 10      no window, prints results + latency summary
   python client/client.py --record hello --signer s1    record a 3 s clip (see recorder.py)
   python client/client.py --review [--label hello]      replay / delete recorded clips
@@ -20,9 +22,12 @@ import cv2
 from websockets.exceptions import InvalidStatus
 from websockets.sync.client import connect
 
+import menu
 import recorder
 from common import FakeCamera, add_common_args, encode_jpeg, load_config, open_camera, pack_frame, prepare_frame
 from overlay import BANNER_SECONDS, MAX_BANNER_WORDS, Smoother, draw_keypoints, draw_overlay
+
+WINDOW = "The Almighty Sign Language"
 
 
 class Link:
@@ -53,6 +58,13 @@ class Link:
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
+
+    def push_frame(self, frame):
+        """Hand the newest camera frame to the sender thread."""
+        with self.cond:
+            self.frame, self.frame_t = frame, time.time()
+            self.frame_seq += 1
+            self.cond.notify_all()
 
     def _run(self):
         backoff = 1.0
@@ -141,75 +153,127 @@ class Link:
         return (len(t) - 1) / (t[-1] - t[0]) if len(t) > 2 and t[-1] > t[0] else 0.0
 
 
-def run_live(cfg, token, headless, duration, quiet=False):
-    """Live view, or (headless) a timed run that returns a stats dict (also printed unless quiet)."""
-    link = Link(cfg, token)
-    cap = FakeCamera(cfg, cfg["fake_camera_fps"]) if cfg.get("fake_camera_fps") else open_camera(cfg)
-    link.want_kp = (not headless) or bool(cfg.get("keypoints"))  # live view shows the skeleton from the first frame (k toggles); headless stays lean
+def open_cap(cfg):
+    return FakeCamera(cfg, cfg["fake_camera_fps"]) if cfg.get("fake_camera_fps") else open_camera(cfg)
+
+
+class CamSession:
+    """One visit to the Free cam screen: camera + connection + the live view (mirrored preview, skeleton, banner)."""
+
+    def __init__(self, cfg, token):
+        self.cfg, self.link, self.cap = cfg, Link(cfg, token), open_cap(cfg)
+        self.link.want_kp = True  # the skeleton shows from the first frame (k toggles)
+        self.link.start()
+        self.details, self.smoother, self.disp_fps, self.t_prev = False, Smoother(), 0.0, time.time()
+
+    def frame(self):
+        """Read one camera frame, send it, return the picture to show."""
+        ok, frame = self.cap.read()
+        if not ok:
+            raise RuntimeError("camera read failed")
+        link = self.link
+        link.push_frame(frame)
+        now = time.time()
+        self.disp_fps = 0.9 * self.disp_fps + 0.1 / max(now - self.t_prev, 1e-6)
+        self.t_prev = now
+        img = prepare_frame(frame, self.cfg).copy()
+        if img.shape[1] > 960:  # keep the preview a sane size on small screens
+            img = cv2.resize(img, (960, int(img.shape[0] * 960 / img.shape[1])))
+        # Mirror the preview only (the frames sent to the server stay unflipped: hand side matters in ASL).
+        # Keypoints are in camera coordinates, so draw them before the flip; text after, so it reads normally.
+        if link.want_kp:
+            draw_keypoints(img, link.kp, self.smoother)
+        img = cv2.flip(img, 1)
+        draw_overlay(img, link, self.disp_fps, self.details)
+        return img
+
+    def key(self, key):
+        if key == ord("k"):
+            self.link.want_kp = not self.link.want_kp  # the server only sends keypoints while this is on
+            self.link.kp = None
+        elif key == ord("d"):
+            self.details = not self.details
+
+    def close(self):
+        self.link.stop.set()
+        self.cap.release()
+
+
+def run_ui(cfg, token, free_cam):
+    """The window: Home (word cards + Free cam) -> how-to guide -> Free cam. q quits, m returns to Home."""
+    mouse = menu.Mouse()
+    cv2.namedWindow(WINDOW)
+    cv2.setMouseCallback(WINDOW, mouse.on_event)
+    screen, word, session = ("cam", None, None) if free_cam else ("home", None, None)
+    try:
+        while True:
+            if screen == "cam":
+                session = session or CamSession(cfg, token)
+                img, action = session.frame(), None
+            elif screen == "guide":
+                img, action = menu.render_guide(mouse, word)
+            else:
+                img, action = menu.render_home(mouse)
+            cv2.imshow(WINDOW, img)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q") or (key == 27 and screen != "guide"):
+                break
+            if screen == "cam":
+                session.key(key)
+                if key == ord("m"):
+                    action = ("home", None)
+            elif key == 27:
+                action = ("home", None)
+            if action:
+                if screen == "cam":
+                    session.close()
+                    session = None
+                screen, word = action
+    finally:
+        if session:
+            session.close()
+        cv2.destroyAllWindows()
+    return 0
+
+
+def run_live(cfg, token, duration, quiet=False):
+    """Headless timed run: no window; returns a stats dict (also printed unless quiet)."""
+    link, cap = Link(cfg, token), open_cap(cfg)
+    link.want_kp = bool(cfg.get("keypoints"))  # headless stays lean unless asked
     link.start()
-    t_start, last_n, shown, disp_fps, t_prev, cam_n = time.time(), 0, 0, 0.0, time.time(), 0
-    details, smoother = False, Smoother()
+    t_start, last_n, cam_n = time.time(), 0, 0
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
                 raise RuntimeError("camera read failed")
-            with link.cond:
-                link.frame, link.frame_t = frame, time.time()
-                link.frame_seq += 1
-                link.cond.notify_all()
+            link.push_frame(frame)
             cam_n += 1
-            if headless:
-                if link.n_results != last_n and link.result and not quiet:
-                    r, last_n = link.result, link.n_results
-                    print(f"#{r['frame_id']:>4} {r['label']:<14} conf {r['confidence']:.2f} state {r['state']:<9} "
-                          f"rtt {(r['rtt_ms'] or 0):6.1f} ms  server {r['server_ms']['total']:5.1f} ms  dropped {r['dropped_frames']}",
-                          flush=True)
-                if time.time() - t_start >= duration:
-                    break
-                time.sleep(0.005)
-            else:
-                now = time.time()
-                disp_fps = 0.9 * disp_fps + 0.1 / max(now - t_prev, 1e-6)
-                t_prev = now
-                img = prepare_frame(frame, cfg).copy()
-                if img.shape[1] > 960:  # keep the preview a sane size on small screens
-                    img = cv2.resize(img, (960, int(img.shape[0] * 960 / img.shape[1])))
-                # Mirror the preview only (the frames sent to the server stay unflipped: hand side matters in ASL).
-                # Keypoints are in camera coordinates, so draw them before the flip; text after, so it reads normally.
-                if link.want_kp:
-                    draw_keypoints(img, link.kp, smoother)
-                img = cv2.flip(img, 1)
-                draw_overlay(img, link, disp_fps, details)
-                cv2.imshow("The Almighty Sign Language", img)
-                key = cv2.waitKey(1) & 0xFF
-                if key in (ord("q"), 27):
-                    break
-                if key == ord("k"):
-                    link.want_kp = not link.want_kp  # the server only sends keypoints while this is on
-                    link.kp = None
-                elif key == ord("d"):
-                    details = not details
+            if link.n_results != last_n and link.result and not quiet:
+                r, last_n = link.result, link.n_results
+                print(f"#{r['frame_id']:>4} {r['label']:<14} conf {r['confidence']:.2f} state {r['state']:<9} "
+                      f"rtt {(r['rtt_ms'] or 0):6.1f} ms  server {r['server_ms']['total']:5.1f} ms  dropped {r['dropped_frames']}",
+                      flush=True)
+            if time.time() - t_start >= duration:
+                break
+            time.sleep(0.005)
     finally:
         link.stop.set()
         cap.release()
-        cv2.destroyAllWindows()
-    if headless:
-        rt, elapsed = sorted(link.rtts), max(time.time() - t_start, 1e-6)
-        stats = {"fps_req": float(cfg["fps"]), "cam_fps": cam_n / elapsed, "sent": link.fid, "send_fps": link.fid / elapsed, "results": link.n_results,
-                 "skipped": link.skipped, "dropped": (link.result or {}).get("dropped_frames", 0), "state": f"{link.state} {link.error}".strip(),
-                 "rtt": (statistics.median(rt), rt[int(0.95 * (len(rt) - 1))], rt[-1]) if rt else (0.0, 0.0, 0.0),
-                 "server_p50": statistics.median(link.server_totals) if link.server_totals else 0.0}
-        if not quiet:
-            print("--- summary ---")
-            print(f"state: {stats['state']}")
-            print(f"camera delivered {stats['cam_fps']:.1f} fps   requested send rate {stats['fps_req']:.0f} fps   actually sent {stats['send_fps']:.1f} fps")
-            print(f"frames sent: {link.fid}   results: {link.n_results}   skipped by flow control: {link.skipped}   server-dropped: {stats['dropped']}   "
-                  f"labels: {dict(link.labels)}")
-            if rt:
-                print(f"round-trip ms: p50 {stats['rtt'][0]:.1f}  p95 {stats['rtt'][1]:.1f}  max {stats['rtt'][2]:.1f}   | server total ms p50 {stats['server_p50']:.1f}")
-        return stats
-    return 0
+    rt, elapsed = sorted(link.rtts), max(time.time() - t_start, 1e-6)
+    stats = {"fps_req": float(cfg["fps"]), "cam_fps": cam_n / elapsed, "sent": link.fid, "send_fps": link.fid / elapsed, "results": link.n_results,
+             "skipped": link.skipped, "dropped": (link.result or {}).get("dropped_frames", 0), "state": f"{link.state} {link.error}".strip(),
+             "rtt": (statistics.median(rt), rt[int(0.95 * (len(rt) - 1))], rt[-1]) if rt else (0.0, 0.0, 0.0),
+             "server_p50": statistics.median(link.server_totals) if link.server_totals else 0.0}
+    if not quiet:
+        print("--- summary ---")
+        print(f"state: {stats['state']}")
+        print(f"camera delivered {stats['cam_fps']:.1f} fps   requested send rate {stats['fps_req']:.0f} fps   actually sent {stats['send_fps']:.1f} fps")
+        print(f"frames sent: {link.fid}   results: {link.n_results}   skipped by flow control: {link.skipped}   server-dropped: {stats['dropped']}   "
+              f"labels: {dict(link.labels)}")
+        if rt:
+            print(f"round-trip ms: p50 {stats['rtt'][0]:.1f}  p95 {stats['rtt'][1]:.1f}  max {stats['rtt'][2]:.1f}   | server total ms p50 {stats['server_p50']:.1f}")
+    return stats
 
 
 def pick_fps(rows, rtt_limit=100.0):
@@ -224,7 +288,7 @@ def run_sweep(cfg, token, rates, duration):
     rows = []
     for fps in rates:
         print(f"--- {fps:g} fps for {duration:g} s ...", flush=True)
-        rows.append(run_live({**cfg, "fps": fps}, token, True, duration, quiet=True))
+        rows.append(run_live({**cfg, "fps": fps}, token, duration, quiet=True))
         time.sleep(2.0)  # let the previous connection close
     print(f"\n{'send fps':>9} {'camera':>7} {'sent':>6} {'answered':>8} {'skipped':>8} {'dropped':>8} {'rtt p50':>8} {'p95':>6} {'max':>6} {'server':>7}")
     for r in rows:
@@ -274,6 +338,7 @@ def main():
     ap.add_argument("--duration", type=float, default=10.0, help="headless run time in seconds (per rate with --sweep, per camera setting with --probe-camera)")
     ap.add_argument("--sweep", metavar="FPS,FPS,..", help="headless: run each send rate in turn (e.g. 10,15,20,30), print round trip / drops per rate and the recommended one")
     ap.add_argument("--probe-camera", action="store_true", help="measure the frame rate the camera really delivers at the configured size")
+    ap.add_argument("--free-cam", action="store_true", help="skip the Home screen and open the camera view directly")
     ap.add_argument("--record", metavar="LABEL")
     ap.add_argument("--signer")
     ap.add_argument("--review", action="store_true")
@@ -293,8 +358,9 @@ def main():
         sys.exit("SIGNLANG_TOKEN is not set (setx SIGNLANG_TOKEN <value>, then open a NEW terminal).")
     if a.sweep:
         sys.exit(run_sweep(cfg, token, [float(x) for x in a.sweep.split(",")], a.duration if a.duration != 10.0 else 20.0))
-    res = run_live(cfg, token, a.headless, a.duration)
-    sys.exit(res if isinstance(res, int) else (0 if res["results"] else 1))
+    if not a.headless:
+        sys.exit(run_ui(cfg, token, a.free_cam))
+    sys.exit(0 if run_live(cfg, token, a.duration)["results"] else 1)
 
 
 if __name__ == "__main__":
