@@ -178,14 +178,12 @@ void Pipeline::open_diag(const std::string& path) {
     spdlog::info("diagnostic log (numbers only, no images): {}", path);
 }
 
-// One CSV line per frame. pts_L / pts_R = how many of the 21 hand points score above the loose threshold (a hand needs >= 15 to count).
-void Pipeline::write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const float* score, const feat::FrameRow& row, const Result& r) {
+// One CSV line per 10 fps decision tick. pts_L / pts_R = how many of the 21 hand points score above the loose threshold (a hand needs >= 15 to count).
+void Pipeline::write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const feat::FrameRow& row, const DecisionOut& d) {
     std::vector<size_t> order(probs.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return probs[a] > probs[b]; });
-    int n_l = 0, n_r = 0;
-    for (int i = 91; i < 112; ++i) n_l += score[i] >= s.cfg.keypoint_thr;
-    for (int i = 112; i < 133; ++i) n_r += score[i] >= s.cfg.keypoint_thr;
+    const int n_l = row.hand_pts[0], n_r = row.hand_pts[1];
     char buf[64];
     diag_ << (long long)ts_ms << ',' << s.cfg.name;
     for (double p : probs) diag_ << ',' << (std::snprintf(buf, sizeof buf, "%.4f", p), buf);
@@ -193,7 +191,7 @@ void Pipeline::write_diag(double ts_ms, const Stage& s, const std::vector<double
         std::snprintf(buf, sizeof buf, "%s:%.3f", cfg_.labels[order[k]].c_str(), probs[order[k]]);
         diag_ << ',' << buf;
     }
-    diag_ << ',' << r.label << ',' << r.confidence << ',' << r.state << ',' << (r.committed ? *r.committed : "") << ',' << row.flags[0] << ',' << row.flags[1]
+    diag_ << ',' << d.label << ',' << d.confidence << ',' << d.state << ',' << (d.committed ? *d.committed : "") << ',' << row.flags[0] << ',' << row.flags[1]
           << ',' << row.flags[3] << ',' << row.flags[4] << ',' << n_l << ',' << n_r << ',' << s.cfg.keypoint_thr << '\n';
     diag_.flush();
 }
@@ -221,27 +219,37 @@ Result Pipeline::process(StreamState& st, const unsigned char* jpeg, size_t n, d
         }
         float xy[feat::kKeypoints * 2], score[feat::kKeypoints];
         for (int i = 0; i < feat::kKeypoints; ++i) xy[2 * i] = k.v[3 * i], xy[2 * i + 1] = k.v[3 * i + 1], score[i] = k.v[3 * i + 2];
-        const feat::FrameRow row = feat::frame_row(xy, score, s.cfg.keypoint_thr, s.cfg.hand_present_thr, k.width, k.height);
+        feat::FrameRow row = feat::frame_row(xy, score, s.cfg.keypoint_thr, s.cfg.hand_present_thr, k.width, k.height);
+        for (int i = 91; i < 112; ++i) row.hand_pts[0] += score[i] >= s.cfg.keypoint_thr;
+        for (int i = 112; i < 133; ++i) row.hand_pts[1] += score[i] >= s.cfg.keypoint_thr;
         st.push(ts_ms, row);
 
+        // 10 fps recognition clock: the temporal model and the decision run once per 100 ms tick, on the frame closest to it
         const auto t2 = std::chrono::steady_clock::now();
-        const feat::FrameRow* win[feat::kWindow];
-        st.window(win);
-        feat::window_features(win, s.h_x);
-        CUDA_CHECK(cudaMemcpyAsync(s.d_x, s.h_x, sizeof(float) * feat::kWindow * feat::kDim, cudaMemcpyHostToDevice, stream_));
-        s.temporal->enqueue(stream_);
-        CUDA_CHECK(cudaMemcpyAsync(s.h_logits, s.d_logits, sizeof(float) * s.n_classes, cudaMemcpyDeviceToHost, stream_));
-        CUDA_CHECK(cudaStreamSynchronize(stream_));
-        std::vector<double> probs(s.n_classes);
-        const float mx = *std::max_element(s.h_logits, s.h_logits + s.n_classes);
-        double sum = 0;
-        for (int i = 0; i < s.n_classes; ++i) sum += (probs[i] = std::exp((double)s.h_logits[i] - mx));
-        for (auto& p : probs) p /= sum;
-        r.ms.temporal = ms_since(t2);
-
-        const DecisionOut d = st.decision.step(probs, row.flags[3] || row.flags[4], st.t_last());  // strict presence drives the idle gate
+        double t_tick = 0;
+        bool run_model = false;
+        while (st.pop_tick(&t_tick, &run_model)) {
+            if (!run_model) continue;  // a gap in the stream: the missed ticks only fill the window
+            const feat::FrameRow* win[feat::kWindow];
+            st.window(win);
+            feat::window_features(win, s.h_x);
+            CUDA_CHECK(cudaMemcpyAsync(s.d_x, s.h_x, sizeof(float) * feat::kWindow * feat::kDim, cudaMemcpyHostToDevice, stream_));
+            s.temporal->enqueue(stream_);
+            CUDA_CHECK(cudaMemcpyAsync(s.h_logits, s.d_logits, sizeof(float) * s.n_classes, cudaMemcpyDeviceToHost, stream_));
+            CUDA_CHECK(cudaStreamSynchronize(stream_));
+            std::vector<double> probs(s.n_classes);
+            const float mx = *std::max_element(s.h_logits, s.h_logits + s.n_classes);
+            double sum = 0;
+            for (int i = 0; i < s.n_classes; ++i) sum += (probs[i] = std::exp((double)s.h_logits[i] - mx));
+            for (auto& p : probs) p /= sum;
+            const feat::FrameRow& tick_row = *win[feat::kWindow - 1];
+            const DecisionOut d = st.decision.step(probs, tick_row.flags[3] || tick_row.flags[4], t_tick);  // strict presence drives the idle gate
+            st.record(d);
+            if (diag_.is_open()) write_diag(t_tick, s, probs, tick_row, d);
+        }
+        r.ms.temporal = ms_since(t2);  // 0 for frames that are not a tick
+        const DecisionOut d = st.report();
         r.label = d.label, r.confidence = d.confidence, r.state = d.state, r.committed = d.committed;
-        if (diag_.is_open()) write_diag(ts_ms, s, probs, score, row, r);
     } catch (const DecodeError&) {
         throw;  // a bad frame says nothing about the health of the GPU stage
     } catch (const std::exception& e) {

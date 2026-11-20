@@ -15,7 +15,7 @@ git reset --hard origin/main      # not "git pull": the repository history was r
 client\.venv\Scripts\python client\client.py
 ```
 Keys: `k` shows the detected hand and body keypoints on the video (handy to see why a sign is missed), `d` shows more details.
-(The config already points to `wss://signlang.dheynorlanda.me/ws`; 640x480, 10 fps, JPEG q70. `SIGNLANG_TOKEN` must be set.
+(The config already points to `wss://signlang.dheynorlanda.me/ws`; 640x480, 20 fps (or the camera's own rate if slower; `--fps N` changes it), JPEG q70. `SIGNLANG_TOKEN` must be set.
 Press `q` or Esc to quit.) The overlay shows the live prediction, its confidence, the state (idle / signing / committed),
 the **committed** words (a sentence appears as `how_are_you` / `where_are_you`) and the round-trip time.
 

@@ -27,6 +27,10 @@ def add_common_args(ap: argparse.ArgumentParser):
     ap.add_argument("--quality", type=int, help="JPEG quality 1-100")
     ap.add_argument("--camera", type=int, help="camera index")
     ap.add_argument("--max-inflight", type=int, help="flow control: max unanswered frames before skipping (0 = off)")
+    ap.add_argument("--camera-fps", type=float, help="ask the camera for this frame rate (some cameras default to 15 at 640x480)")
+    ap.add_argument("--fake-camera", type=float, metavar="FPS", help="no webcam: synthetic frames delivered at this rate (network / server tests)")
+    ap.add_argument("--keypoints", action="store_true", help="with --headless: also ask for the debug keypoints, like the live window does")
+    ap.add_argument("--fourcc", help="camera pixel format, e.g. MJPG (often needed for 30 fps at 640x480 on a USB webcam)")
     ap.add_argument("--headless", action="store_true", help="no window; log to the console")
 
 
@@ -34,7 +38,8 @@ def load_config(args) -> dict:
     cfg = json.loads(Path(args.config).read_text())
     for key, val in (("url", args.url), ("width", args.width), ("height", args.height), ("fps", args.fps),
                      ("jpeg_quality", args.quality), ("camera_index", args.camera),
-                     ("max_inflight", args.max_inflight)):
+                     ("max_inflight", args.max_inflight), ("camera_fps", args.camera_fps), ("camera_fourcc", args.fourcc),
+                     ("fake_camera_fps", args.fake_camera), ("keypoints", args.keypoints or None)):
         if val is not None:
             cfg[key] = val
     return cfg
@@ -45,10 +50,38 @@ def open_camera(cfg) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(cfg["camera_index"], cv2.CAP_DSHOW)
     if not cap.isOpened():
         raise RuntimeError(f"cannot open camera {cfg['camera_index']} (is another app using it?)")
+    if cfg.get("camera_fourcc"):
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*str(cfg["camera_fourcc"])[:4]))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, cfg["width"])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg["height"])
+    if cfg.get("camera_fps"):
+        cap.set(cv2.CAP_PROP_FPS, float(cfg["camera_fps"]))
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
+
+
+class FakeCamera:
+    """Stands in for the webcam in tests: 24 different blurred noise frames (so JPEG size and keypoint work vary like a real stream),
+    delivered at `fps`. Same read()/release() as cv2.VideoCapture."""
+
+    def __init__(self, cfg, fps):
+        import numpy as np
+        rng = np.random.default_rng(0)
+        self.frames = []
+        for i in range(24):
+            img = cv2.GaussianBlur(rng.integers(0, 255, (cfg["height"], cfg["width"], 3), dtype=np.uint8), (0, 0), 5 + i % 4)
+            cv2.circle(img, (80 + 20 * i, 200), 60, (30, 120, 220), -1)
+            self.frames.append(img)
+        self.period, self.n, self.t0 = 1.0 / fps, 0, time.time()
+
+    def read(self):
+        due = self.t0 + self.n * self.period
+        time.sleep(max(0.0, due - time.time()))
+        self.n += 1
+        return True, self.frames[self.n % len(self.frames)]
+
+    def release(self):
+        pass
 
 
 class Grabber:
@@ -95,8 +128,9 @@ def encode_jpeg(frame, quality: int) -> bytes:
     return buf.tobytes()
 
 
-def pack_frame(frame_id: int, jpeg: bytes, flags: int = 0) -> bytes:
-    return HEADER.pack(MAGIC, PROTO_VERSION, flags, frame_id, int(time.time() * 1e6)) + jpeg
+def pack_frame(frame_id: int, jpeg: bytes, flags: int = 0, ts: float = None) -> bytes:
+    """ts = the moment the camera delivered the frame (seconds); the server resamples by it. Default: now."""
+    return HEADER.pack(MAGIC, PROTO_VERSION, flags, frame_id, int((time.time() if ts is None else ts) * 1e6)) + jpeg
 
 
 def put_text(img, text, org, scale=0.6, color=(255, 255, 255), thick=1):

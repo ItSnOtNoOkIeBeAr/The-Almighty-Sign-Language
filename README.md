@@ -31,14 +31,14 @@ recognises the sign and sends the result back, and the laptop shows it large on 
 flowchart LR
     subgraph L["💻 Laptop · CPU only"]
         direction TB
-        W["🎥 Webcam<br/>640x480 JPEG, 10 fps"]
+        W["🎥 Webcam<br/>640x480 JPEG, 20 fps"]
         O["🖥️ Overlay<br/>word · keypoints · latency"]
     end
     T["☁️ Cloudflare Tunnel<br/>wss"]
     subgraph P["🟩 PC · NVIDIA RTX 5060 Ti"]
         direction TB
-        D["nvJPEG decode"] --> K["RTMW keypoints<br/>TensorRT FP16"]
-        K --> S["SignNet<br/>TensorRT FP16"]
+        D["nvJPEG decode"] --> K["RTMW keypoints, every frame<br/>TensorRT FP16"]
+        K --> S["SignNet, 10 ticks per second<br/>TensorRT FP16"]
         S --> X["Decision logic<br/>gate · smoothing · joining"]
     end
     W --> T --> D
@@ -56,7 +56,7 @@ Every number below comes with its command in [docs/RESULTS.md](docs/RESULTS.md) 
 |---|---|
 | ⏱️ **Server time per frame** | about **5 ms** median (C++/TensorRT FP16); the Python fallback needs about 22 ms |
 | 🛡️ **Soak test through the tunnel** | 4,521 of 4,521 frames answered in 10 minutes, no errors, no reconnects, no memory growth |
-| 🧪 **Tests** | C++ 55 CPU + 6 GPU, Python 35 decision tests, protocol conformance 9/9 on both servers, AddressSanitizer clean |
+| 🧪 **Tests** | C++ 61 CPU + 6 GPU, Python 44 (decision + recognition clock), protocol conformance 9/9 on both servers, AddressSanitizer clean |
 | 🎯 **Accuracy on 11 unseen signers** | 84.8% of windows correct (macro-F1 0.83) with the primary keypoint model; the per-word table and the weak spots (`where`, `you`, sentences) are listed honestly in RESULTS |
 
 ## 📚 Documents

@@ -55,7 +55,7 @@ def drop_ghost_hand(pts, scores):
 
 class Smoother:
     """Per-point exponential smoothing in keypoint-image coordinates. Fed with each new server message, queried every
-    display frame, so the skeleton glides between the ~10 Hz results instead of stepping."""
+    display frame, so the skeleton glides between the server results (one per sent frame, 10-30 Hz) instead of stepping."""
 
     def __init__(self):
         self.pos, self.seen, self.msg, self.target, self.last = {}, {}, None, {}, None

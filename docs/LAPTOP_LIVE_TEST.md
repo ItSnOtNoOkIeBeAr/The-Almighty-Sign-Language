@@ -38,6 +38,20 @@ client\.venv\Scripts\python client\client.py --headless --duration 60 --width 64
 Keep the last lines (round trip p50 / p95 / max and server time). Round trip above about 300 ms: move closer to the
 access point or use the hotspot; `--fps 8` makes the stream lighter.
 
+## 3b. Camera speed and send rate (smoother skeleton)
+The skeleton is as smooth as the frames you send; the server tracks every frame and still recognises at exactly 10 per second.
+1. What does this laptop's camera really deliver? (do it in the light you will demo in; a camera in dim light slows itself down)
+   ```
+   client\.venv\Scripts\python client\client.py --probe-camera --width 640 --height 480
+   ```
+   It tries the default, an explicit 30 fps request and MJPG + 30 fps, and prints what each really delivers. If a variant is clearly faster it prints the flags to use (for example `--camera-fps 30 --fourcc MJPG`).
+2. Which send rate does your Wi-Fi carry? (needs the server running with the new build; 20 s per rate)
+   ```
+   client\.venv\Scripts\python client\client.py --sweep 10,15,20,30 --duration 20 --width 640 --height 480 --keypoints
+   ```
+   Add the flags from step 1 if it found some. The table shows, per rate: camera fps, frames sent and answered, skipped by flow control, dropped by the server, round trip p50 / p95 / max and server time, then the **recommended rate** (highest with round trip p50 <= 100 ms, at most 5% skipped or dropped, and a camera that keeps up).
+3. Make it the default: set `"fps"` in `client/config.json` (or pass `--fps N`). Send me the table.
+
 ## 4. Open the live window
 ```
 client\.venv\Scripts\python client\client.py --width 640 --height 480

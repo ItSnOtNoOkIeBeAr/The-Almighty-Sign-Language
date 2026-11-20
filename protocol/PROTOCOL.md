@@ -55,6 +55,13 @@ All integers are **little-endian**.
 - `keypoints` (only when the frame had flags bit1 set): `{"w":640,"h":480,"thr":1.9,"pts":[[index,x,y,score],...]}` with x, y in pixels of the frame that was sent and `index` the COCO-WholeBody index: body 0-12 and both hands 91-132. Points scoring below `thr` are unreliable guesses; a client should not draw them.
 - Servers may add extra fields. Clients must ignore unknown fields.
 
+### Frame rate and the recognition clock
+
+- A client may send **10 to 30 frames per second**. `client_ts_us` must be the moment the camera delivered the frame and must increase; servers resample by it.
+- Keypoints (RTMW) are computed for **every** received frame, so a client that asks for `keypoints` gets a fresh skeleton in every reply (smooth overlay at any rate).
+- The temporal model and the decision logic run exactly **once per 100 ms of client time** ("tick", the first tick is the first frame): each tick uses the frame whose `client_ts_us` is closest to the tick, so the 30-frame window always covers 3 s and the decision settings (M, cooldowns, `repeat_rest_frames`, ...) mean the same at 10, 20 or 30 fps. After a gap in the stream the missed ticks hold the nearest frame.
+- `label`, `confidence` and `state` of a reply are the newest tick's output (so frames between ticks repeat it; `state` is `committed` only on the reply that carries a `committed_label`). `server_ms.temporal` is 0 for a frame that is not a tick. If several words are committed in one frame (after a gap) they are reported one per reply.
+
 ### Error
 
 ```json

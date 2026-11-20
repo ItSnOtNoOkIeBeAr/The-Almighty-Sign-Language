@@ -107,6 +107,35 @@ for seed in (11, 12, 13):
 out["decision"] = streams
 print("decision golden: commits per stream", [sum(1 for f in s_["expected"] if f[2]) for s_ in streams])
 
+# 5. ticks: client timestamps at 10-30 fps (jitter, dropped frames, a gap, a long pause) through the 10 fps recognition clock (server/fallback/ticks.py)
+from ticks import TickGrid  # noqa: E402
+
+
+def tick_stream(fps, seed, n=400):
+    r = np.random.default_rng(seed)
+    ts, t = [], 5000.0
+    for i in range(n):
+        t += 1000.0 / fps + r.normal(0, 3)
+        if r.random() < 0.08:
+            t += 1000.0 / fps * float(r.integers(1, 6))   # dropped frames
+        if i == 150:
+            t += 700.0                                     # a gap (several ticks fall due at once)
+        if i == 300:
+            t += 9000.0                                    # a long pause: the grid restarts
+        ts.append(round(t, 3))
+    return ts
+
+
+ticks_out = []
+for fps, seed in ((10, 21), (15, 22), (20, 23), (30, 24), (30, 25)):
+    ts = tick_stream(fps, seed)
+    g, exp = TickGrid(), []
+    for i, t in enumerate(ts):
+        exp += [[round(tt, 3), int(idx), bool(run)] for tt, idx, run in g.push(t, i)]
+    ticks_out.append({"ts": ts, "expected": exp})
+out["ticks"] = ticks_out
+print("tick golden: ticks per stream", [len(t_["expected"]) for t_ in ticks_out])
+
 p = Path(__file__).parent / "data" / "golden.json"
 p.write_text(json.dumps(out, separators=(",", ":")))
 print("wrote", p, p.stat().st_size // 1024, "KB")

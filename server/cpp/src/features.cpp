@@ -93,23 +93,63 @@ void window_features(const FrameRow* const* rows, float* out) {
 }  // namespace feat
 
 void StreamState::reset() {
-    times_.clear(), rows_.clear();
-    t_last_ = -1.0;
+    ticks_.clear(), events_.clear();
+    last_ = {"none", 0.0, "idle", std::nullopt};
+    have_cur_ = have_prev_ = have_next_ = false;
+    interval_ = -1.0, t_last_ = -1.0, due_ = skip_ = j_ = 0;
     decision.reset();
 }
 
 void StreamState::push(double ts_ms, const feat::FrameRow& row) {
-    t_last_ = std::max(ts_ms, t_last_ + 1.0);  // timestamps must increase even if a client sends duplicates
-    times_.push_back(t_last_);
-    rows_.push_back(row);
-    while (times_.size() > 120) times_.pop_front(), rows_.pop_front();
+    const double ts = t_last_ = std::max(ts_ms, t_last_ + 1.0);  // timestamps must increase even if a client sends duplicates
+    if (have_cur_) prev_ = cur_, prev_ts_ = cur_ts_, have_prev_ = true;
+    cur_ = row, cur_ts_ = ts, have_cur_ = true;
+    if (have_prev_) {
+        const double dt = std::min(std::max(ts - prev_ts_, 1.0), 300.0);
+        interval_ = interval_ < 0 ? dt : 0.9 * interval_ + 0.1 * dt;  // running average of the frame interval
+    }
+    const double half = std::min(std::max(0.5 * (interval_ < 0 ? step_ms_ : interval_), 5.0), 50.0);  // a tick fires this early
+    if (!have_next_ || ts - next_tick_ > kMaxGapMs) next_tick_ = ts, have_next_ = true;  // first frame, or a long pause: restart the grid
+    due_ = skip_ = j_ = 0;
+    if (ts >= next_tick_ - half) {
+        due_ = static_cast<int>(std::floor((ts - (next_tick_ - half)) / step_ms_)) + 1;
+        skip_ = std::max(0, due_ - kMaxRun);
+    }
+}
+
+bool StreamState::pop_tick(double* t_ms, bool* run_model) {
+    if (j_ >= due_) return false;
+    const double t = next_tick_;
+    const bool use_prev = have_prev_ && std::fabs(prev_ts_ - t) < std::fabs(cur_ts_ - t);  // the closer frame; ties take the newer
+    ticks_.push_back(use_prev ? prev_ : cur_);
+    if (ticks_.size() > static_cast<size_t>(feat::kWindow)) ticks_.pop_front();
+    *t_ms = t, *run_model = j_ >= skip_;
+    next_tick_ += step_ms_;
+    ++j_;
+    return true;
 }
 
 void StreamState::window(const feat::FrameRow* out[feat::kWindow]) const {
+    const int n = static_cast<int>(ticks_.size());
     for (int k = 0; k < feat::kWindow; ++k) {
-        const double target = t_last_ - (feat::kWindow - 1 - k) * step_ms_;
-        const auto it = std::upper_bound(times_.begin(), times_.end(), target);  // bisect_right
-        const std::ptrdiff_t i = std::max<std::ptrdiff_t>(0, (it - times_.begin()) - 1);
-        out[k] = &rows_[(size_t)i];
+        const int i = std::max(0, k - (feat::kWindow - n));
+        out[k] = n ? &ticks_[(size_t)i] : &cur_;
     }
+}
+
+void StreamState::record(const DecisionOut& d) {
+    if (d.committed) events_.push_back(*d.committed);
+    last_ = d;
+    if (last_.state == "committed") last_.state = "signing";
+    last_.committed.reset();
+}
+
+DecisionOut StreamState::report() {
+    DecisionOut d = last_;
+    if (!events_.empty()) {
+        d.committed = events_.front();
+        d.state = "committed";
+        events_.pop_front();
+    }
+    return d;
 }

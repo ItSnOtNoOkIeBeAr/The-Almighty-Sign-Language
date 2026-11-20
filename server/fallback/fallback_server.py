@@ -1,13 +1,14 @@
 """Fallback server (safety net): same protocol as the C++ server, onnxruntime-gpu instead of custom CUDA.
 
-Pipeline per frame: JPEG decode -> RTMW keypoints (full-frame box, training/rtmw_ref.py) -> 57-point features
-(training/signfeat.py) -> 30-frame window resampled to 10 fps by the client timestamps -> SignNet (ONNX) ->
-decision logic (server/fallback/decision.py). Models come from server/config/server.json (profile primary or fallback).
+Pipeline: JPEG decode -> RTMW keypoints (full-frame box, training/rtmw_ref.py) for EVERY frame (smooth skeleton on the client);
+then a 10 fps clock driven by the client timestamps (ticks.py) picks, for each 100 ms tick, the frame closest to it: 57-point features
+(training/signfeat.py) -> 30-tick window -> SignNet (ONNX) -> decision logic (server/fallback/decision.py) run once per tick, so the
+window still covers 3 s and the decision settings keep their meaning at any client rate (10-30 fps).
+Models come from server/config/server.json (profile primary or fallback).
 Run: python server/fallback/fallback_server.py [--profile fallback]   (needs SIGNLANG_TOKEN in the environment)
 """
 import argparse
 import asyncio
-import bisect
 import hmac
 import json
 import logging
@@ -15,6 +16,7 @@ import os
 import struct
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import cv2
@@ -28,6 +30,7 @@ import rtmw_ref as R  # noqa: E402
 import signfeat as S  # noqa: E402
 import torch  # noqa: E402  (CPU only here: signfeat's tensor maths, shared with training)
 from decision import Decision  # noqa: E402
+from ticks import TickGrid  # noqa: E402
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, WebSocket  # noqa: E402
@@ -47,7 +50,7 @@ class DecodeError(Exception):
 
 
 class DiagLog:
-    """Live diagnostics (--diag-log): one CSV line per frame, same columns as the C++ server. Numbers only, no images."""
+    """Live diagnostics (--diag-log): one CSV line per 10 fps decision tick, same columns as the C++ server. Numbers only, no images."""
 
     def __init__(self, path):
         self.f = open(path, "w", encoding="utf-8", newline="\n")
@@ -55,9 +58,9 @@ class DiagLog:
                      "hand_L_loose,hand_R_loose,hand_L_strict,hand_R_strict,pts_L,pts_R,thr\n")
         log.info("diagnostic log (numbers only, no images): %s", path)
 
-    def write(self, ts_ms, profile, probs, score, flags, thr, label, conf, state, committed):
+    def write(self, ts_ms, profile, probs, counts, flags, thr, label, conf, state, committed):
         top = sorted(range(len(LABELS)), key=lambda i: -probs[i])[:3]
-        n_l, n_r = int((score[91:112] >= thr).sum()), int((score[112:133] >= thr).sum())
+        n_l, n_r = counts  # hand keypoints above the loose threshold (of 21 each)
         self.f.write(f"{int(ts_ms)},{profile}," + ",".join(f"{p:.4f}" for p in probs) + "," + ",".join(f"{LABELS[i]}:{probs[i]:.3f}" for i in top)
                      + f",{label},{conf},{state},{committed or ''},{int(flags[0])},{int(flags[1])},{int(flags[3])},{int(flags[4])},{n_l},{n_r},{thr}\n")
         self.f.flush()
@@ -90,17 +93,24 @@ class Engine:
         sx, sy = self.kp.run(None, {"input": blob})
         kpt, score = R.simcc_decode(sx[0], sy[0], self.wh, centre, scale)
         pts, flags = S.frame_row(kpt, score, self.thr, self.present_thr, (w, h))
-        st.push(ts_ms, pts, flags)
+        counts = (int((score[91:112] >= self.thr).sum()), int((score[112:133] >= self.thr).sum()))
         t2 = time.perf_counter()
-        wp, wf = st.window()
-        feats = S.window_features(torch.from_numpy(wp)[None], torch.from_numpy(wf)[None]).numpy()
-        logits = self.temporal.run(None, {"x": feats})[0][0]
-        probs = np.exp(logits - logits.max())
-        probs /= probs.sum()
+        # 10 fps recognition clock: every 100 ms tick takes the frame closest to it; the model and the decision run once per tick
+        for t_tick, (tp, tf, tc), run_model in st.push(ts_ms, (pts, flags, counts)):
+            st.window.append((tp, tf))
+            if not run_model:  # a gap in the stream: the missed ticks only fill the window
+                continue
+            wp, wf = st.window_arrays()
+            feats = S.window_features(torch.from_numpy(wp)[None], torch.from_numpy(wf)[None]).numpy()
+            logits = self.temporal.run(None, {"x": feats})[0][0]
+            probs = np.exp(logits - logits.max())
+            probs /= probs.sum()
+            out = st.decision.step(probs.tolist(), bool(tf[3] or tf[4]), t_tick)  # strict presence drives the idle gate
+            st.record(out)
+            if self.diag:
+                self.diag.write(t_tick, self.profile, probs.tolist(), tc, tf, self.thr, *out)
         t3 = time.perf_counter()
-        label, conf, state, committed = st.decision.step(probs.tolist(), bool(flags[3] or flags[4]), st.t_last)  # strict presence drives the idle gate
-        if self.diag:
-            self.diag.write(st.t_last, self.profile, probs.tolist(), score, flags, self.thr, label, conf, state, committed)
+        label, conf, state, committed = st.report()
         res = {
             "type": "result", "label": label, "confidence": conf, "state": state, "committed_label": committed, "profile": self.profile,
             "server_ms": {"decode": round((t1 - t0) * 1e3, 2), "keypoints": round((t2 - t1) * 1e3, 2),
@@ -113,7 +123,7 @@ class Engine:
 
 
 class ConnState:
-    """Per connection: recent keypoint rows (kept by client timestamp) and the decision state machine."""
+    """Per connection: the 10 fps recognition clock, the window of tick frames and the decision state machine."""
 
     def __init__(self, decision_cfg):
         self.dropped = 0
@@ -121,19 +131,37 @@ class ConnState:
         self.reset()
 
     def reset(self):
-        self.times, self.pts, self.flags, self.t_last = [], [], [], -1.0
+        self.t_last = -1.0
+        self.grid = TickGrid(CFG["window"]["step_ms"])
+        self.window = deque(maxlen=S.WINDOW)  # (pts, flags) of the last 30 ticks, oldest first
+        self.events = deque()                 # committed words not reported yet: one per reply
+        self.last = ("none", 0.0, "idle")     # newest decision output (label, confidence, state)
         self.decision.reset()
 
-    def push(self, ts_ms, pts, flags):
+    def push(self, ts_ms, item):
+        """Every frame, with its client timestamp -> the 100 ms ticks that fell due: [(tick_ms, item, run_model)]."""
         self.t_last = max(ts_ms, self.t_last + 1.0)  # timestamps must increase even if a client sends duplicates
-        self.times.append(self.t_last), self.pts.append(pts), self.flags.append(flags)
-        del self.times[:-120], self.pts[:-120], self.flags[:-120]
+        return self.grid.push(self.t_last, item)
 
-    def window(self):
-        """WINDOW frames at step_ms spacing ending now; each slot holds the newest frame at or before its time (the first frame before the stream began)."""
-        step = CFG["window"]["step_ms"]
-        idx = [max(0, bisect.bisect_right(self.times, self.t_last - (S.WINDOW - 1 - k) * step) - 1) for k in range(S.WINDOW)]
-        return np.stack([self.pts[i] for i in idx]), np.stack([self.flags[i] for i in idx])
+    def window_arrays(self):
+        """WINDOW ticks ending with the newest; before the stream began the first tick is repeated."""
+        rows = list(self.window)
+        rows = [rows[0]] * (S.WINDOW - len(rows)) + rows
+        return np.stack([r[0] for r in rows]), np.stack([r[1] for r in rows])
+
+    def record(self, out):
+        """Store a decision output (label, confidence, state, committed); committed words are queued until a reply can carry them."""
+        label, conf, state, committed = out
+        if committed:
+            self.events.append(committed)
+        self.last = (label, conf, "signing" if state == "committed" else state)
+
+    def report(self):
+        """What the reply to the current frame says: the newest decision output, and the oldest unreported committed word."""
+        label, conf, state = self.last
+        if self.events:
+            return label, conf, "committed", self.events.popleft()
+        return label, conf, state, None
 
 
 def parse(data: bytes):
