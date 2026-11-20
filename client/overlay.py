@@ -8,7 +8,8 @@ import cv2
 
 from common import put_text
 
-BANNER_SECONDS = 4.0   # how long a committed word/sentence stays on screen
+BANNER_SECONDS = 5.0   # the banner stays this long after the newest word; a new word restarts the timer
+MAX_BANNER_WORDS = 6   # older words scroll off so the line stays readable
 SENTENCE_TEXT = {"how_are_you": "HOW ARE YOU?", "where_are_you": "WHERE ARE YOU?"}
 # COCO-WholeBody indices the server sends: body 0-12 and both hands 91-132. Only the arms are drawn:
 # shoulders 5/6, elbows 7/8, wrists 9/10 (no face points 0-4, no hips 11/12).
@@ -83,14 +84,12 @@ def draw_keypoints(img, kp, smoother=None):
 
 
 def draw_banner(img, link):
-    """Big, centred, bottom-third banner with the newest committed word or sentence (fades out after BANNER_SECONDS)."""
-    if not link.last_commit:
-        return
-    word, t = link.last_commit
+    """Big, centred, bottom-third banner with the newest committed word or sentence (words accumulate; fades out BANNER_SECONDS after the newest)."""
+    words, t = link.phrase
     age = time.time() - t
-    if age > BANNER_SECONDS:
+    if not words or age > BANNER_SECONDS:
         return
-    text, h, w = label_text(word), img.shape[0], img.shape[1]
+    text, h, w = " ".join(label_text(x) for x in words), img.shape[0], img.shape[1]
     scale = 3.0
     while scale > 0.8 and cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 6)[0][0] > 0.9 * w:
         scale -= 0.2

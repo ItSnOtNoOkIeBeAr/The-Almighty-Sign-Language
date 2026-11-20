@@ -22,7 +22,7 @@ from websockets.sync.client import connect
 
 import recorder
 from common import add_common_args, encode_jpeg, load_config, open_camera, pack_frame, prepare_frame
-from overlay import Smoother, draw_keypoints, draw_overlay
+from overlay import BANNER_SECONDS, MAX_BANNER_WORDS, Smoother, draw_keypoints, draw_overlay
 
 
 class Link:
@@ -47,7 +47,7 @@ class Link:
         self.last_ack, self.last_progress, self.skipped = -1, time.time(), 0
         self.want_kp = False         # ask the server for debug keypoints (key k); costs ~1.5 kB per reply
         self.kp = None               # newest keypoints message: {"w", "h", "thr", "pts": [[index, x, y, score], ...]}
-        self.last_commit = None      # (word or sentence, time) of the newest committed event, for the big banner
+        self.phrase = ((), 0.0)      # (committed words/sentences shown in the big banner, time of the newest one)
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -114,7 +114,11 @@ class Link:
                     self.kp = m.get("keypoints") if self.want_kp else None
                     if m.get("committed_label"):
                         self.history.append(m["committed_label"])
-                        self.last_commit = (m["committed_label"], time.time())
+                        words, t = self.phrase
+                        now = time.time()
+                        # words pile up while the banner is still showing; once it has expired, start again from zero
+                        words = (words if now - t <= BANNER_SECONDS else ())[-(MAX_BANNER_WORDS - 1):]
+                        self.phrase = (words + (m["committed_label"],), now)
                 elif m.get("type") == "error":
                     self.error = f"server error: {m['code']}"
         except Exception:  # noqa: BLE001 - closed socket ends the thread; sender notices rx is dead
