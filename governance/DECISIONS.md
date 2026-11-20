@@ -144,3 +144,9 @@ Detectors (a person box was found in 1398 of 1399 frames by both): YOLOX-m ORT 2
 - **Committed words are queued, one per reply;** between ticks the reply repeats the newest label/state (never "committed").
 - **Client sends on camera frames, not on a timer;** the timestamp is the capture time. Default 20 fps pending the laptop sweep; the flow control limit (3 in flight) is unchanged, it caps the rate at 3 / round trip.
 - **The overlay smoothing already existed** and stays drawing-only.
+
+## Client menu and drawn sign pictures (2026-11-21)
+- **Menu inside the OpenCV window, not a web page:** the laptop client must stay opencv + websockets + numpy, the token stays in an environment variable, and a browser page would need a local web server relaying the camera and socket (backend work the user did not want).
+- **Pictures drawn in code, not generated images:** no image generator is available and the repo must not carry downloaded artwork (licences). Schematic diagrams are consistent with the skeleton overlay, need no files and are unit-tested; `client/guides/<word>.png` lets real pictures replace them without code changes.
+- **The pinned picture sits under the preview** (window grows from 640x480 to about 870x730), because an overlay would cover the signer or the result banner.
+- **Camera and connection only run in Free cam:** Home costs nothing and the camera light is off there.

@@ -54,6 +54,6 @@ Server port: 127.0.0.1:8765. Token: user env var SIGNLANG_TOKEN (never in files/
 - Fallback server (real models, ~20 s to load): `training\.venv\Scripts\python server\fallback\fallback_server.py [--profile fallback]`  (open a NEW terminal after setx)
 - Decision tests: `training\.venv\Scripts\python -m unittest server/fallback/test_decision.py -v`; retrain/export: `training/train.py`, `replay_eval.py --tune`, `export_onnx.py` (STATUS Phase 7)
 - Conformance: `client\.venv\Scripts\python protocol\conformance_test.py --url ws://127.0.0.1:8765/ws`  (expects 9/9)
-- Client: `client\.venv\Scripts\python client\client.py [--headless --duration 10] [--url ws://127.0.0.1:8765/ws for local; config default is the tunnel]`; this PC's camera is 640x480: add `--width 640 --height 480`
+- Client: opens a Home screen (word cards -> how-to picture, or Free cam; `--free-cam` skips it; in Free cam click a word for its picture, `h` hides, `m` Home, `q` quits; pictures drawn by `client/guides.py`, tests: `client\.venv\Scripts\python -m unittest client/test_ui.py`). Run: `client\.venv\Scripts\python client\client.py [--headless --duration 10] [--url ws://127.0.0.1:8765/ws for local; config default is the tunnel]`; this PC's camera is 640x480: add `--width 640 --height 480`
 - Record: `client.py --record <label> --signer <id>`; review: `client.py --review`
 
