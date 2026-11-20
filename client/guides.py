@@ -107,8 +107,8 @@ def why_2(img): draw_head(img); draw_hand(img, (225, 178), "Y", 15, 50); arrow(i
 def where_1(img): draw_head(img, (150, 40), 24); draw_hand(img, (150, 240), "point", -4, 52)
 def where_2(img): where_1(img); arrow(img, (90, 100), (210, 100), both=True)
 def you_1(img):
-    draw_head(img, (240, 80), 20); put_text(img, "other person", (176, 205), 0.5, GREY)
-    draw_hand(img, (88, 160), "point", 90, 46); arrow(img, (186, 160), (230, 160))
+    draw_head(img, (240, 80), 20); put_text(img, "other person", (190, 190), 0.5, GREY)
+    draw_hand(img, (80, 205), "point", 55, 46); arrow(img, (150, 150), (196, 118))
 
 
 FRAMES = {"hello": [hello_1, hello_2], "what": [what_1, what_2], "how": [how_1, how_2], "why": [why_1, why_2],
@@ -120,9 +120,9 @@ STEPS = {"hello": ["Flat hand at your forehead", "Move it outward, like a salute
          "how": ["Fists together, knuckles touching", "Roll them outward into open palms"],
          "why": ["Fingertips touch your forehead", "Pull away, ending in a Y hand"],
          "where": ["Index finger up", "Shake it side to side"],
-         "you": ["Point at the other person"],
-         "how_are_you": ["HOW: fists together", "...roll to open palms", "YOU: point at them"],
-         "where_are_you": ["WHERE: index finger up", "...shake it side to side", "YOU: point at them"]}
+         "you": ["Point at the other person (diagonal is fine)"],
+         "how_are_you": ["HOW: fists together", "...roll to open palms", "YOU: point at them, diagonal"],
+         "where_are_you": ["WHERE: index finger up", "...shake it side to side", "YOU: point at them, diagonal"]}
 
 _cache = {}
 
