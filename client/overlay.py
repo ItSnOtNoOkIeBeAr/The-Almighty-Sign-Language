@@ -23,6 +23,8 @@ SMOOTH_TAU = 0.05    # seconds: smoothing time constant for a point that is near
 CATCHUP_PX = 12      # the further a point is behind its target, the faster it moves: tau / (1 + gap / CATCHUP_PX)
 SNAP_PX = 90         # a point that jumps further than this (keypoint-image pixels) is a new detection: no gliding
 GHOST_OVERLAP = 0.6  # hands closer than this fraction of a hand size are one hand detected twice
+ARM_MIN_SCORE = 0.5  # arm points are guesses when the arm is out of view: demand more than the hand threshold
+EDGE_PX = 12         # arm points this close to (or beyond) the frame edge are clamped guesses, not seen joints
 GRACE = 0.25         # seconds a point may be missing before it is dropped (hides single-frame flicker)
 
 
@@ -65,7 +67,13 @@ class Smoother:
         if kp is not self.msg:  # a new message: refresh targets
             self.msg = kp
             self.target = {int(i): (x, y) for i, x, y, s in kp["pts"] if s >= thr and x >= 0}
-            self.target = drop_ghost_hand(self.target, {int(i): s for i, _, _, s in kp["pts"]})
+            scores, w, h = {int(i): s for i, _, _, s in kp["pts"]}, kp["w"], kp["h"]
+            for i in ARM_IDS:  # an arm that is out of view gets guessed joints at the frame edge: hide those
+                if i in self.target:
+                    x, y = self.target[i]
+                    if scores[i] < ARM_MIN_SCORE or not (EDGE_PX < x < w - EDGE_PX and EDGE_PX < y < h - EDGE_PX):
+                        del self.target[i]
+            self.target = drop_ghost_hand(self.target, scores)
             for i in self.target:
                 self.seen[i] = now
         last, self.last = (now if self.last is None else self.last), now
