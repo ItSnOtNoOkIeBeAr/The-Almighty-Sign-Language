@@ -67,8 +67,6 @@ def draw_overlay(img, link, disp_fps, details):
     r = link.result or {}
     ok = link.state == "connected"
     h, w = img.shape[:2]
-    if link.want_kp:
-        draw_keypoints(img, link.kp)
     draw_banner(img, link)
     # top-left: connection (small) and the current prediction with its confidence
     put_text(img, link.state + (f"  [{link.error}]" if link.error else ""), (10, 24), 0.55, (0, 255, 0) if ok else (0, 165, 255))

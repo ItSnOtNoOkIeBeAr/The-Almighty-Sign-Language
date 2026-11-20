@@ -22,7 +22,7 @@ from websockets.sync.client import connect
 
 import recorder
 from common import add_common_args, encode_jpeg, load_config, open_camera, pack_frame, prepare_frame
-from overlay import draw_overlay
+from overlay import draw_keypoints, draw_overlay
 
 
 class Link:
@@ -153,6 +153,11 @@ def run_live(cfg, token, headless, duration):
                 img = prepare_frame(frame, cfg).copy()
                 if img.shape[1] > 960:  # keep the preview a sane size on small screens
                     img = cv2.resize(img, (960, int(img.shape[0] * 960 / img.shape[1])))
+                # Mirror the preview only (the frames sent to the server stay unflipped: hand side matters in ASL).
+                # Keypoints are in camera coordinates, so draw them before the flip; text after, so it reads normally.
+                if link.want_kp:
+                    draw_keypoints(img, link.kp)
+                img = cv2.flip(img, 1)
                 draw_overlay(img, link, disp_fps, details)
                 cv2.imshow("The Almighty Sign Language", img)
                 key = cv2.waitKey(1) & 0xFF
