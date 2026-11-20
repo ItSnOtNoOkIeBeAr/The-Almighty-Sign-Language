@@ -27,12 +27,34 @@ SNAP_PX = 90         # a point that jumps further than this (keypoint-image pixe
 GHOST_OVERLAP = 0.6  # hands closer than this fraction of a hand size are one hand detected twice
 ARM_MIN_SCORE = 0.5  # arm points are guesses when the arm is out of view: demand more than the hand threshold
 EDGE_PX = 12         # arm points this close to (or beyond) the frame edge are clamped guesses, not seen joints
+HAND_MIN_SCORE = 0.5   # a real hand is detected confidently: mean score of its points
+HAND_MIN_POINTS = 14   # ... and most of its 21 points are seen
+HAND_ARM_REACH = 1.3   # ... and it is at the end of a detected arm: its wrist is within this x its own size (+ a margin) of an arm wrist
 GRACE = 0.25         # seconds a point may be missing before it is dropped (hides single-frame flicker)
 
 
 def label_text(label):
     """committed_label -> what to show: sentences as a question, words in capitals."""
     return SENTENCE_TEXT.get(label, label.replace("_", " ").upper())
+
+
+def drop_stray_hands(pts, scores, width):
+    """Keep a hand only if it is plausibly YOURS: confident, mostly complete, and attached to a detected arm (an elbow-and-wrist pair that
+    survived the arm filter). Objects and background clutter that the model labels as a hand have no arm behind them and are dropped."""
+    arms = [pts[i] for i in (9, 10) if i in pts]
+    for first in (91, 112):
+        ids = [i for i in range(first, first + 21) if i in pts]
+        if not ids:
+            continue
+        xs, ys = [pts[i][0] for i in ids], [pts[i][1] for i in ids]
+        size = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+        wrist = pts.get(first, (sum(xs) / len(xs), sum(ys) / len(ys)))
+        reach = HAND_ARM_REACH * size + 0.04 * width
+        if not (len(ids) >= HAND_MIN_POINTS and sum(scores[i] for i in ids) / len(ids) >= HAND_MIN_SCORE
+                and any(math.hypot(wrist[0] - ax, wrist[1] - ay) <= reach for ax, ay in arms)):
+            for i in ids:
+                del pts[i]
+    return pts
 
 
 def drop_ghost_hand(pts, scores):
@@ -81,7 +103,7 @@ class Smoother:
                 if not all(self._seen_arm(i, scores, w, h) for i in side[1:]):  # elbow and wrist must really be seen
                     for i in side:
                         self.target.pop(i, None)
-            self.target = drop_ghost_hand(self.target, scores)
+            self.target = drop_ghost_hand(drop_stray_hands(self.target, scores, w), scores)
             for i in self.target:
                 self.seen[i] = now
         last, self.last = (now if self.last is None else self.last), now

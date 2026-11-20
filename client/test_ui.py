@@ -143,5 +143,44 @@ class CamViewTests(unittest.TestCase):
         self.assertIsNone(menu.recognised(Link(phrase=(("hello",), now - 10), result=None), now))
 
 
+class HandFilterTests(unittest.TestCase):
+    """Only hands at the end of a detected arm, confident and mostly complete, are drawn."""
+
+    @staticmethod
+    def arm(first, ex=300, score=0.9):  # shoulder / elbow / wrist on the image
+        s, e, w = (5, 7, 9) if first == 91 else (6, 8, 10)
+        return [[s, ex, 200, score], [e, ex, 300, score], [w, ex, 400, score]]
+
+    @staticmethod
+    def hand(first, cx, cy, score=0.9, n=21):
+        return [[first + k, cx + (k % 5) * 6, cy - (k // 5) * 8, score] for k in range(n)]
+
+    def kept(self, pts):
+        import overlay
+        sm = overlay.Smoother()
+        sm.update({"w": 640, "h": 480, "thr": 0.3, "pts": pts}, 1.0)
+        return {i for i in sm.target if i >= 91}
+
+    def test_hand_on_a_detected_arm_is_kept(self):
+        self.assertEqual(len(self.kept(self.arm(91) + self.hand(91, 300, 400))), 21)
+
+    def test_hand_with_no_arm_is_dropped(self):
+        self.assertEqual(self.kept(self.hand(91, 300, 400)), set())
+
+    def test_hand_far_from_the_arm_is_dropped(self):
+        self.assertEqual(self.kept(self.arm(91) + self.hand(91, 80, 100)), set())
+
+    def test_low_confidence_and_incomplete_hands_are_dropped(self):
+        self.assertEqual(self.kept(self.arm(91) + self.hand(91, 300, 400, score=0.4)), set())
+        self.assertEqual(self.kept(self.arm(91) + self.hand(91, 300, 400, n=8)), set())
+
+    def test_arm_off_screen_means_no_hand(self):
+        off = [[5, 300, 200, 0.9], [7, 300, 300, 0.9], [9, 300, 479, 0.9]]  # wrist clamped at the bottom edge: that side is hidden
+        self.assertEqual(self.kept(off + self.hand(91, 300, 440)), set())
+
+    def test_two_real_hands_both_kept(self):
+        self.assertEqual(len(self.kept(self.arm(91, 200) + self.hand(91, 200, 400) + self.arm(112, 440) + self.hand(112, 440, 400))), 42)
+
+
 if __name__ == "__main__":
     unittest.main()
