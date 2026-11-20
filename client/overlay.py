@@ -22,12 +22,31 @@ FINGERTIPS = (4, 8, 12, 16, 20)                  # positions in a hand's 21 ids
 SMOOTH_TAU = 0.05    # seconds: smoothing time constant for a point that is nearly still (kills jitter)
 CATCHUP_PX = 12      # the further a point is behind its target, the faster it moves: tau / (1 + gap / CATCHUP_PX)
 SNAP_PX = 90         # a point that jumps further than this (keypoint-image pixels) is a new detection: no gliding
+GHOST_OVERLAP = 0.6  # hands closer than this fraction of a hand size are one hand detected twice
 GRACE = 0.25         # seconds a point may be missing before it is dropped (hides single-frame flicker)
 
 
 def label_text(label):
     """committed_label -> what to show: sentences as a question, words in capitals."""
     return SENTENCE_TEXT.get(label, label.replace("_", " ").upper())
+
+
+def drop_ghost_hand(pts, scores):
+    """The keypoint model sometimes reports BOTH hands on one real hand. If the two detected hands sit on top of each
+    other (centre distance < GHOST_OVERLAP x the bigger hand size), keep only the one with the higher mean score."""
+    hands = []
+    for first in (91, 112):
+        ids = [i for i in range(first, first + 21) if i in pts]
+        if len(ids) >= 5:
+            xs, ys = [pts[i][0] for i in ids], [pts[i][1] for i in ids]
+            size = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+            hands.append((ids, (sum(xs) / len(xs), sum(ys) / len(ys)), size, sum(scores[i] for i in ids) / len(ids)))
+    if len(hands) == 2:
+        (ia, ca, sa, ma), (ib, cb, sb, mb) = hands
+        if math.hypot(ca[0] - cb[0], ca[1] - cb[1]) < GHOST_OVERLAP * max(sa, sb):
+            for i in (ib if ma >= mb else ia):
+                del pts[i]
+    return pts
 
 
 class Smoother:
@@ -46,6 +65,7 @@ class Smoother:
         if kp is not self.msg:  # a new message: refresh targets
             self.msg = kp
             self.target = {int(i): (x, y) for i, x, y, s in kp["pts"] if s >= thr and x >= 0}
+            self.target = drop_ghost_hand(self.target, {int(i): s for i, _, _, s in kp["pts"]})
             for i in self.target:
                 self.seen[i] = now
         last, self.last = (now if self.last is None else self.last), now
