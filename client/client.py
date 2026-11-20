@@ -22,7 +22,7 @@ from websockets.sync.client import connect
 
 import recorder
 from common import add_common_args, encode_jpeg, load_config, open_camera, pack_frame, prepare_frame
-from overlay import draw_keypoints, draw_overlay
+from overlay import Smoother, draw_keypoints, draw_overlay
 
 
 class Link:
@@ -130,7 +130,7 @@ def run_live(cfg, token, headless, duration):
     link.want_kp = not headless  # live view shows the skeleton from the first frame (k toggles); headless stays lean
     link.start()
     t_start, last_n, shown, disp_fps, t_prev = time.time(), 0, 0, 0.0, time.time()
-    details = False
+    details, smoother = False, Smoother()
     try:
         while True:
             ok, frame = cap.read()
@@ -157,7 +157,7 @@ def run_live(cfg, token, headless, duration):
                 # Mirror the preview only (the frames sent to the server stay unflipped: hand side matters in ASL).
                 # Keypoints are in camera coordinates, so draw them before the flip; text after, so it reads normally.
                 if link.want_kp:
-                    draw_keypoints(img, link.kp)
+                    draw_keypoints(img, link.kp, smoother)
                 img = cv2.flip(img, 1)
                 draw_overlay(img, link, disp_fps, details)
                 cv2.imshow("The Almighty Sign Language", img)

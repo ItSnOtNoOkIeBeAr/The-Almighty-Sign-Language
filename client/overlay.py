@@ -1,6 +1,7 @@
 """On-screen display of the live client: debug keypoints, the big committed word/sentence, a compact latency readout.
 Pure drawing (opencv + time), so it also works on the CPU-only laptop. Keys (set in client.py): k keypoints, d details, q/Esc quit.
 """
+import math
 import time
 
 import cv2
@@ -15,7 +16,11 @@ ARM_IDS = [5, 6, 7, 8, 9, 10]
 BODY_BONES = [(0, 1), (0, 2), (2, 4), (1, 3), (3, 5)]  # positions in ARM_IDS (like HAND_BONES: positions in a hand's 21 ids)
 HAND_BONES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0, 9), (9, 10), (10, 11), (11, 12),
               (0, 13), (13, 14), (14, 15), (15, 16), (0, 17), (17, 18), (18, 19), (19, 20)]
-COLORS = {"body": (200, 160, 90), "left": (230, 120, 0), "right": (0, 140, 255)}  # BGR: left hand blue, right hand orange
+WHITE, TIP_RED = (255, 255, 255), (60, 60, 255)  # BGR: clean white skeleton, red fingertips
+FINGERTIPS = (4, 8, 12, 16, 20)                  # positions in a hand's 21 ids
+SMOOTH_TAU = 0.07    # seconds: display smoothing time constant (server results arrive at ~10 Hz, display runs faster)
+SNAP_PX = 90         # a point that jumps further than this (keypoint-image pixels) is a new detection: no gliding
+GRACE = 0.25         # seconds a point may be missing before it is dropped (hides single-frame flicker)
 
 
 def label_text(label):
@@ -23,24 +28,58 @@ def label_text(label):
     return SENTENCE_TEXT.get(label, label.replace("_", " ").upper())
 
 
-def draw_keypoints(img, kp):
-    """kp: the server's keypoints message. Points scoring below its threshold are hidden (they are guesses)."""
-    if not kp:
-        return
-    sx, sy, thr = img.shape[1] / kp["w"], img.shape[0] / kp["h"], kp.get("thr", 0.0)
-    pts = {int(i): (int(x * sx), int(y * sy)) for i, x, y, s in kp["pts"] if s >= thr and x >= 0}
+class Smoother:
+    """Per-point exponential smoothing in keypoint-image coordinates. Fed with each new server message, queried every
+    display frame, so the skeleton glides between the ~10 Hz results instead of stepping."""
 
-    def bones(ids, pairs, color, r):
+    def __init__(self):
+        self.pos, self.seen, self.msg, self.target, self.last = {}, {}, None, {}, None
+
+    def update(self, kp, now):
+        if not kp:
+            self.pos.clear(), self.seen.clear()
+            self.msg = None
+            return {}, 1, 1
+        thr = kp.get("thr", 0.0)
+        if kp is not self.msg:  # a new message: refresh targets
+            self.msg = kp
+            self.target = {int(i): (x, y) for i, x, y, s in kp["pts"] if s >= thr and x >= 0}
+            for i in self.target:
+                self.seen[i] = now
+        last, self.last = (now if self.last is None else self.last), now
+        alpha = 1 - math.exp(-max(now - last, 0.0) / SMOOTH_TAU)
+        for i, (tx, ty) in self.target.items():
+            px, py = self.pos.get(i, (tx, ty))
+            if math.hypot(tx - px, ty - py) > SNAP_PX:
+                px, py = tx, ty
+            self.pos[i] = (px + (tx - px) * alpha, py + (ty - py) * alpha)
+        for i in [i for i, t in self.seen.items() if now - t > GRACE]:
+            self.pos.pop(i, None), self.seen.pop(i)
+        return self.pos, kp["w"], kp["h"]
+
+
+def draw_keypoints(img, kp, smoother=None):
+    """kp: the server's keypoints message. Points scoring below its threshold are hidden (they are guesses).
+    Clean style: white arm and hand skeleton, red fingertip dots. With a Smoother the motion is smoothed."""
+    if smoother is None:
+        smoother = Smoother()
+    pos, w, h = smoother.update(kp, time.time())
+    if not pos:
+        return
+    sx, sy = img.shape[1] / w, img.shape[0] / h
+    pts = {i: (int(x * sx), int(y * sy)) for i, (x, y) in pos.items()}
+
+    def bones(ids, pairs, r, tips=()):
         for a, b in pairs:
             if ids[a] in pts and ids[b] in pts:
-                cv2.line(img, pts[ids[a]], pts[ids[b]], color, 2, cv2.LINE_AA)
-        for i in ids:
+                cv2.line(img, pts[ids[a]], pts[ids[b]], WHITE, 2, cv2.LINE_AA)
+        for n, i in enumerate(ids):
             if i in pts:
-                cv2.circle(img, pts[i], r, color, -1, cv2.LINE_AA)
+                cv2.circle(img, pts[i], r + 2 if n in tips else r, TIP_RED if n in tips else WHITE, -1, cv2.LINE_AA)
 
-    bones(ARM_IDS, BODY_BONES, COLORS["body"], 4)
-    bones(list(range(91, 112)), HAND_BONES, COLORS["left"], 3)
-    bones(list(range(112, 133)), HAND_BONES, COLORS["right"], 3)
+    bones(ARM_IDS, BODY_BONES, 4)
+    bones(list(range(91, 112)), HAND_BONES, 2, FINGERTIPS)
+    bones(list(range(112, 133)), HAND_BONES, 2, FINGERTIPS)
 
 
 def draw_banner(img, link):
