@@ -26,6 +26,9 @@ void apply_decision(DecisionCfg& d, const json& j) {
     d.join_ms = j.value("join_ms", d.join_ms);
     d.release_frames = j.value("release_frames", d.release_frames);
     d.release_none_frames = j.value("release_none_frames", d.release_none_frames);
+    d.repeat_rest_frames = j.value("repeat_rest_frames", d.repeat_rest_frames);
+    d.repeat_rest_p = j.value("repeat_rest_p", d.repeat_rest_p);
+    d.repeat_cooldown_ms = j.value("repeat_cooldown_ms", d.repeat_cooldown_ms);
 }
 
 ProfileCfg parse_profile(const std::string& root, const json& j, const std::string& name) {

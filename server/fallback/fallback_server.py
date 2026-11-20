@@ -246,6 +246,7 @@ def main():
     global engine
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", default=CFG["models"]["default_profile"], choices=[k for k in CFG["models"] if k != "default_profile"])
+    ap.add_argument("--port", type=int, default=None, help="listen on this port instead of server.json (a second instance for testing next to the live one)")
     ap.add_argument("--diag-log", default=None, help="write one CSV line per frame (probabilities, decision, hand detection); numbers only")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = ap.parse_args()
@@ -258,7 +259,7 @@ def main():
     # Verified in uvicorn/protocols/websockets/websockets_sansio_impl.py; drop only that exact message.
     logging.getLogger("uvicorn.error").addFilter(lambda rec: "without completing handshake" not in rec.getMessage())
     engine = Engine(profile, DiagLog(args.diag_log) if args.diag_log else None)
-    net = CFG["net"]
+    net = {**CFG["net"], **({"port": args.port} if args.port else {})}
     log.info("fallback server v%s listening on %s:%d", VERSION, net["host"], net["port"])
     # ws_max_size is far above MAX_BYTES so oversized frames get a too_large reply instead of a closed socket.
     uvicorn.run(AuthWS(app, token), host=net["host"], port=net["port"], ws_max_size=16 * 1024 * 1024,

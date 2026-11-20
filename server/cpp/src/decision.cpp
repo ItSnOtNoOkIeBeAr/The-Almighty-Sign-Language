@@ -28,6 +28,7 @@ void Decision::reset() {
     ema_.clear();
     cand_ = -1, consec_ = 0, fired_ = -1, away_ = 0;
     last_commit_ = -1e18;
+    guard_ = -1, rest_run_ = 0, guard_t_ = 0;
     pending_.reset();
     outbox_.clear();
 }
@@ -40,6 +41,13 @@ DecisionOut Decision::step(const std::vector<double>& probs, bool hands_present,
     }
     hands_.push_back(hands_present);
     if (static_cast<int>(hands_.size()) > cfg_.gate_frames) hands_.pop_front();
+    const int n_rest = cfg_.repeat_rest_frames;
+    if (n_rest > 0 && guard_ >= 0) {  // same-word guard bookkeeping: runs even while the idle gate is closed (the gate flickers inside a sign)
+        const double pw = probs[guard_];
+        rest_run_ = pw < cfg_.repeat_rest_p ? rest_run_ + 1 : 0;
+        if (rest_run_ >= n_rest || t_ms - guard_t_ >= cfg_.repeat_cooldown_ms) guard_ = -1;  // the sign ended, or the word was not seen for a while
+        else if (pw >= cfg_.commit_threshold) guard_t_ = t_ms;                               // the model still sees that sign: the clock restarts
+    }
     if (std::count(hands_.begin(), hands_.end(), true) < cfg_.gate_min) {  // idle gate closed
         ema_.clear(), cand_ = -1, consec_ = 0, fired_ = -1, away_ = 0;
         return out(none_, probs[none_], emitted, false);
@@ -63,9 +71,11 @@ DecisionOut Decision::step(const std::vector<double>& probs, bool hands_present,
     } else {
         cand_ = -1, consec_ = 0;
     }
-    if (cand_ >= 0 && consec_ >= cfg_.commit_consecutive_M && cand_ != fired_ && t_ms - last_commit_ >= cfg_.cooldown_ms) {
+    const bool repeat = guard_ >= 0 && cand_ == guard_;  // the same word again, without the sign having ended in between
+    if (cand_ >= 0 && consec_ >= cfg_.commit_consecutive_M && cand_ != fired_ && t_ms - last_commit_ >= cfg_.cooldown_ms && !repeat) {
         for (auto& e : commit(labels_[cand_], t_ms)) emitted.push_back(std::move(e));
         fired_ = cand_, away_ = 0, last_commit_ = t_ms, consec_ = 0;
+        if (n_rest > 0) guard_ = cand_, guard_t_ = t_ms, rest_run_ = 0;
     }
     return out(k, conf, emitted, true);
 }

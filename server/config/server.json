@@ -49,7 +49,10 @@
     "gate_frames": 5,
     "gate_min": 2,
     "release_frames": 3,
-    "release_none_frames": 8
+    "release_none_frames": 8,
+    "repeat_rest_frames": 3,
+    "repeat_rest_p": 0.2,
+    "repeat_cooldown_ms": 2000
   },
   "degrade": {
     "enabled": true,

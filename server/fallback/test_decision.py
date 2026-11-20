@@ -75,7 +75,8 @@ class DecisionTests(unittest.TestCase):
 
     def test_cooldown_delays_a_quick_second_commit(self):
         # gate and release shortened so only the cooldown can hold the second commit back
-        cfg = {**CFG, "gate_frames": 1, "gate_min": 1, "release_frames": 1, "release_none_frames": 1, "cooldown_ms": 800}
+        # (and the same-word guard off: this test is about the generic cooldown, the guard has its own tests)
+        cfg = {**CFG, "gate_frames": 1, "gate_min": 1, "release_frames": 1, "release_none_frames": 1, "cooldown_ms": 800, "repeat_rest_frames": 0}
         r = Run(cfg).feed("hello", 4).feed("none", 1).feed("hello", 12)
         self.assertEqual(r.committed(), ["hello", "hello"])
         self.assertGreaterEqual(r.events[1][0] - r.events[0][0], 800)
@@ -138,6 +139,101 @@ class DecisionTests(unittest.TestCase):
         r.d.reset()
         r.feed("none", 30, hands=False)
         self.assertEqual(r.committed(), [])
+
+
+WORDS = LABELS[1:]
+
+
+def one_sign_with_dip(r, w, other):
+    """One long sign that the hand tracker loses twice: the hands flicker out of view (idle gate closes) while the model still says `w`,
+    then the model briefly says another word (2 frames) and comes back. The first long hold of the sign is 3 s."""
+    return r.feed(w, 8).feed(w, 6, hands=False).feed(w, 8).feed(other, 2).feed(w, 8).feed(w, 5, hands=False).feed(w, 10)
+
+
+class SameWordGuardTests(unittest.TestCase):
+    """The same word must not commit twice for one sign (repeat_rest_frames / repeat_rest_p / repeat_cooldown_ms), for every word."""
+
+    def test_guard_is_on_in_the_deployed_settings(self):
+        self.assertGreater(CFG["repeat_rest_frames"], 0)
+
+    def test_one_long_sign_with_a_mid_sign_dip_commits_once_for_every_word(self):
+        for w in WORDS:
+            with self.subTest(word=w):
+                other = "why" if w == "what" else "what"
+                r = one_sign_with_dip(Run(), w, other).feed("none", 30, hands=False)
+                self.assertEqual(r.committed(), [w])
+
+    def test_without_the_guard_the_same_sign_commits_more_than_once(self):
+        # documents the defect the guard fixes: hello, hands flicker out of view (closing the idle gate) while the model keeps saying hello
+        cfg = {**CFG, "repeat_rest_frames": 0}
+        r = Run(cfg).feed("hello", 8).feed("hello", 6, hands=False).feed("hello", 10).feed("none", 30, hands=False)
+        self.assertGreaterEqual(len(r.committed()), 2)
+
+    def test_two_separate_signs_with_the_hands_down_between_commit_twice_for_every_word(self):
+        for w in WORDS:
+            with self.subTest(word=w):
+                r = Run().feed(w, 8).feed("none", 10, hands=False).feed(w, 8).feed("none", 30, hands=False)
+                self.assertEqual(r.committed(), [w, w])
+
+    def test_two_signs_separated_only_by_the_model_falling_back_to_none_commit_twice(self):
+        # hands stay in view the whole time; only the probability of the word drops (long enough to release the "fired" state too)
+        r = Run().feed("hello", 8).feed("none", CFG["release_none_frames"] + 2, hands=True).feed("hello", 8).feed("none", 30, hands=False)
+        self.assertEqual(r.committed(), ["hello", "hello"])
+
+    def test_a_shorter_wobble_than_the_rest_time_is_still_one_sign(self):
+        r = Run().feed("hello", 8).feed("none", CFG["repeat_rest_frames"] - 1).feed("hello", 8).feed("none", 30, hands=False)
+        self.assertEqual(r.committed(), ["hello"])
+
+    def test_time_fallback_the_word_may_commit_again_after_the_cooldown_without_being_predicted(self):
+        # no probability falls below repeat_rest_p (so no "rest"), but the word is not the prediction for longer than repeat_cooldown_ms
+        cfg = {**CFG, "repeat_rest_p": 0.0}  # `rest` can never happen
+        gap = int(CFG["repeat_cooldown_ms"] / DT) + 3
+        r = Run(cfg).feed("hello", 8).feed("what", 2).feed("none", gap, conf=0.35).feed("hello", 8).feed("none", 30, hands=False)
+        self.assertEqual(r.committed(), ["hello", "hello"])
+
+    def test_how_then_you_is_exactly_one_sentence_even_with_flicker(self):
+        r = one_sign_with_dip(Run(), "how", "what")
+        one_sign_with_dip(r, "you", "what").feed("none", 40, hands=False)
+        self.assertEqual(r.committed(), ["how_are_you"])
+
+    def test_where_then_you_is_exactly_one_sentence_even_with_flicker(self):
+        r = one_sign_with_dip(Run(), "where", "what")
+        one_sign_with_dip(r, "you", "what").feed("none", 40, hands=False)
+        self.assertEqual(r.committed(), ["where_are_you"])
+
+    def test_you_then_where_is_exactly_one_sentence_even_with_flicker(self):
+        r = one_sign_with_dip(Run(), "you", "what")
+        one_sign_with_dip(r, "where", "what").feed("none", 40, hands=False)
+        self.assertEqual(r.committed(), ["where_are_you"])
+
+    def test_you_alone_commits_once_after_the_join_window(self):
+        r = one_sign_with_dip(Run(), "you", "what")
+        self.assertEqual(r.committed(), [])  # held while waiting for HOW / WHERE
+        r.feed("none", 30, hands=False)
+        self.assertEqual(r.committed(), ["you"])
+
+    def test_a_held_word_is_never_emitted_alone_and_again_inside_its_sentence(self):
+        for first, second in (("how", "you"), ("where", "you"), ("you", "where")):
+            with self.subTest(first=first, second=second):
+                r = Run().feed(first, 8).feed(first, 6, hands=False).feed(first, 6)  # first word, hand flicker, still the same sign
+                r.feed(second, 8).feed(second, 6, hands=False).feed(second, 6).feed("none", 40, hands=False)
+                self.assertEqual(len(r.committed()), 1)
+                self.assertIn("_", r.committed()[0])
+
+    def test_a_different_word_is_not_blocked_by_the_guard(self):
+        r = Run().feed("hello", 8).feed("what", 8).feed("why", 8).feed("none", 30, hands=False)
+        self.assertEqual(r.committed(), ["hello", "what", "why"])
+
+    def test_a_third_word_between_two_equal_ones_lets_the_first_word_commit_again(self):
+        # HELLO, WHAT, HELLO with the hands staying up: the guard only covers the most recent word
+        r = Run().feed("hello", 8).feed("what", 8).feed("hello", 8).feed("none", 30, hands=False)
+        self.assertEqual(r.committed(), ["hello", "what", "hello"])
+
+    def test_reset_clears_the_guard(self):
+        r = Run().feed("hello", 8)
+        r.d.reset()
+        r.feed("hello", 8)
+        self.assertEqual(r.committed(), ["hello", "hello"])
 
 
 if __name__ == "__main__":

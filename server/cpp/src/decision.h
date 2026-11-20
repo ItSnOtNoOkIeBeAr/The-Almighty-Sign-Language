@@ -1,5 +1,5 @@
 // Decision logic (BUILD_SPEC section 8). Line-by-line port of server/fallback/decision.py, which stays the reference:
-// idle gate -> EMA -> candidate -> commit after M agreeing frames -> fired/release -> word joining.
+// idle gate -> EMA -> candidate -> commit after M agreeing frames -> fired/release -> same-word guard -> word joining.
 #pragma once
 #include <deque>
 #include <optional>
@@ -12,6 +12,10 @@ struct DecisionCfg {
     int commit_consecutive_M = 4;
     double cooldown_ms = 800, join_ms = 1500;
     int release_frames = 3, release_none_frames = 8;
+    // Same-word guard (0 = off): after a word commits it cannot commit again until the model dropped it (probability < repeat_rest_p)
+    // for repeat_rest_frames frames in a row, or has not seen it (probability < commit_threshold) for repeat_cooldown_ms.
+    int repeat_rest_frames = 0;
+    double repeat_rest_p = 0.2, repeat_cooldown_ms = 2000;
 };
 
 struct DecisionOut {
@@ -40,6 +44,8 @@ private:
     std::vector<double> ema_;                // empty = no EMA yet
     int cand_ = -1, consec_ = 0, fired_ = -1, away_ = 0;
     double last_commit_ = -1e18;
+    int guard_ = -1, rest_run_ = 0;          // same-word guard: last committed word, frames the model has been away from it
+    double guard_t_ = 0;                     // ms the model last saw that word
     std::optional<Pending> pending_;         // word waiting for a join partner
     std::deque<std::string> outbox_;         // the protocol allows one event per frame
 };

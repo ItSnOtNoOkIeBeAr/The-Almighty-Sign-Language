@@ -12,6 +12,11 @@ reference for the C++ port.  Per frame, in order:
      `how`, `where`, `you` are held up to join_ms waiting for their partner, then emitted alone. The join timer restarts
      every frame the held word is still the prediction, so it measures the pause after the first SIGN ended (a long sign
      commits early and must not eat the window).
+  6. same-word guard (repeat_rest_frames > 0): after a word commits, the SAME word cannot commit again until the model has dropped that word
+     (raw probability < repeat_rest_p) for repeat_rest_frames frames in a row, i.e. the sign ended, or has not seen it (probability below
+     the commit threshold) for repeat_cooldown_ms. One long sign whose hand flickers out of view (closing the idle gate) or whose probability wobbles commits once; two
+     signs with the model back at rest in between commit twice. A DIFFERENT word is never blocked, and committing it replaces the guard
+     (HOW then YOU still joins). The guard also covers held words (how/where/you), so a word is never emitted alone and again in its sentence.
 """
 from collections import deque
 
@@ -32,6 +37,8 @@ class Decision:
         self.fired, self.away = None, 0
         self.last_commit = -1e18
         self.pending = None  # (word, commit time ms) waiting for a join partner
+        self.guard = None  # (class index, ms the model last predicted it) of the last committed word, while it may not commit again
+        self.rest_run = 0  # consecutive frames in which the guarded word's raw probability is low (the sign has ended)
         self.outbox = deque()  # events not yet reported: the protocol allows one event per frame
 
     def step(self, probs, hands_present, t_ms):
@@ -42,6 +49,14 @@ class Decision:
             emitted.append(self.pending[0])
             self.pending = None
         self.hands.append(bool(hands_present))
+        n_rest = c.get("repeat_rest_frames", 0)
+        if n_rest and self.guard is not None:  # same-word guard bookkeeping: runs even while the idle gate is closed (the gate flickers inside a sign)
+            p = probs[self.guard[0]]
+            self.rest_run = self.rest_run + 1 if p < c.get("repeat_rest_p", 0.2) else 0
+            if self.rest_run >= n_rest or t_ms - self.guard[1] >= c.get("repeat_cooldown_ms", 2000):
+                self.guard = None  # the sign ended (the model dropped the word) or the word has not been seen for a while
+            elif p >= c["commit_threshold"]:
+                self.guard = (self.guard[0], t_ms)  # the model still sees that sign: the clock restarts
         if sum(self.hands) < c["gate_min"]:  # idle gate closed
             self.ema, self.cand, self.consec, self.fired, self.away = None, None, 0, None, 0
             return self._out(self.none, probs[self.none], emitted, gate_open=False)
@@ -60,10 +75,13 @@ class Decision:
             self.cand = k
         else:
             self.cand, self.consec = None, 0
+        repeat = self.guard is not None and self.cand == self.guard[0]  # the same word again, without the sign having ended in between
         if (self.cand is not None and self.consec >= c["commit_consecutive_M"] and self.cand != self.fired
-                and t_ms - self.last_commit >= c["cooldown_ms"]):
+                and t_ms - self.last_commit >= c["cooldown_ms"] and not repeat):
             emitted += self._commit(self.labels[self.cand], t_ms)
             self.fired, self.away, self.last_commit, self.consec = self.cand, 0, t_ms, 0
+            if n_rest:
+                self.guard, self.rest_run = (self.cand, t_ms), 0
         return self._out(k, conf, emitted, gate_open=True)
 
     def _commit(self, word, t_ms):

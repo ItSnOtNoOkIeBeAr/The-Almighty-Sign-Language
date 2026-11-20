@@ -57,6 +57,56 @@ kpt, score = R.simcc_decode(sx, sy, (IW, IH), centre, scale)
 out["simcc"] = {"k": K, "nx": NX, "ny": NY, "sx": short(sx, 2), "sy": short(sy, 2),
                 "kpt": short(kpt, 4), "score": short(score, 5)}
 
+# 4. decision: long synthetic streams (words, mid-sign wobble, hands flickering out of view, rests) through decision.py with the deployed settings
+sys.path.insert(0, str(ROOT / "server" / "fallback"))
+from decision import Decision  # noqa: E402
+
+LABELS = json.loads((ROOT / "protocol" / "labels.json").read_text())["labels"]
+DEC_CFG = json.loads((ROOT / "server" / "config" / "server.json").read_text())["decision"]
+
+
+def decision_stream(seed, frames=900):
+    r = np.random.default_rng(seed)
+    probs, hands = [], []
+
+    def add(label, n, conf, hand=True, wobble=0.0):
+        for _ in range(n):
+            c = float(np.clip(conf + r.normal(0, 0.03), 0.3, 0.99)) if label != "none" else float(np.clip(conf + r.normal(0, 0.03), 0.3, 0.99))
+            if r.random() < wobble:  # the model briefly drops the word
+                label_now, c = ("none" if r.random() < 0.5 else LABELS[int(r.integers(1, 7))]), 0.9
+            else:
+                label_now = label
+            rest = (1 - c) / 6
+            probs.append([c if n_ == label_now else rest for n_ in LABELS])
+            hands.append(hand)
+
+    while len(probs) < frames:
+        add("none", int(r.integers(2, 16)), 0.9, hand=bool(r.random() < 0.3))                    # rest, hands mostly down
+        w = LABELS[int(r.integers(1, 7))]
+        for _ in range(int(r.integers(1, 3))):                                                   # one word, or two signs (sentences)
+            for _ in range(int(r.integers(1, 4))):                                               # a sign made of 1-3 stretches
+                add(w, int(r.integers(4, 22)), float(r.uniform(0.7, 0.97)), hand=True, wobble=0.04)
+                if r.random() < 0.5:
+                    add(w, int(r.integers(1, 8)), float(r.uniform(0.7, 0.97)), hand=False)       # hands flicker out of view mid-sign
+            if r.random() < 0.5:
+                w = LABELS[int(r.integers(1, 7))]
+            add("none", int(r.integers(0, 6)), 0.9, hand=bool(r.random() < 0.5))
+    probs, hands = probs[:frames], hands[:frames]
+    probs = [[round(x, 3) for x in p_] for p_ in probs]
+    return probs, hands
+
+
+streams = []
+for seed in (11, 12, 13):
+    probs, hands = decision_stream(seed)
+    dec, frames = Decision(LABELS, DEC_CFG), []
+    for i, (pr, h) in enumerate(zip(probs, hands)):
+        lab, conf, state, committed = dec.step(pr, h, i * 100.0)
+        frames.append([lab, state, committed or ""])
+    streams.append({"probs": [x for p_ in probs for x in p_], "hands": [int(h) for h in hands], "expected": frames})
+out["decision"] = streams
+print("decision golden: commits per stream", [sum(1 for f in s_["expected"] if f[2]) for s_ in streams])
+
 p = Path(__file__).parent / "data" / "golden.json"
 p.write_text(json.dumps(out, separators=(",", ":")))
 print("wrote", p, p.stat().st_size // 1024, "KB")

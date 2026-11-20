@@ -50,9 +50,10 @@ def main():
     a = ap.parse_args()
     token = os.environ["SIGNLANG_TOKEN"]
     sel = json.loads((T.RUNS / a.model / "selected.json").read_text())
-    cfg = sel["decision"]
     srv_cfg = json.loads((ROOT / "server" / "config" / "server.json").read_text())
-    print("replay decision settings:", {k: cfg[k] for k in ("commit_threshold", "commit_consecutive_M", "ema_alpha")})
+    # the settings the server really uses: those selected on val plus the same-word guard settings from server.json
+    cfg = {**sel["decision"], **{k: v for k, v in srv_cfg["decision"].items() if k.startswith("repeat_")}}
+    print("replay decision settings:", {k: cfg.get(k) for k in ("commit_threshold", "commit_consecutive_M", "ema_alpha", "repeat_rest_frames", "repeat_rest_p", "repeat_cooldown_ms")})
     d = D.load(a.model)
     net = SignNet(n_cls=len(D.LABELS)).cuda().eval()
     net.load_state_dict(torch.load(T.RUNS / a.model / "best.pt"))

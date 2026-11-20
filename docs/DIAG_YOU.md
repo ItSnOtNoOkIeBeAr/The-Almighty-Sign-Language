@@ -34,3 +34,8 @@ How to read it:
 | p(you) high but another word wins | confusion with that word (see the "best non-none" column) |
 
 Send me the whole report output (it contains no personal data).
+
+## Replay a log through the decision logic (double commits, threshold questions)
+`training\.venv\Scripts\python server\scripts\replay_diag.py logs\diag_<time>.csv --list [--set repeat_rest_frames=3 --set repeat_cooldown_ms=2000]`
+replays the logged probabilities and hand flags through `decision.py` (first it checks that the replay equals what the server committed),
+lists every commit, flags the same word committed twice within 6 s, and tells whether p(word) dipped in between (two signs) or not (one sign).

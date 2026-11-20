@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "decision.h"
+#include "golden.h"
 
 namespace {
 const Config& cfg() {
@@ -97,8 +98,9 @@ TEST(Decision, SameSignAgainAfterHandsDownAndCooldown) {
 
 TEST(Decision, CooldownDelaysAQuickSecondCommit) {
     // gate and release shortened so only the cooldown can hold the second commit back
+    // (and the same-word guard off: this test is about the generic cooldown, the guard has its own tests)
     DecisionCfg c = CFG();
-    c.gate_frames = 1, c.gate_min = 1, c.release_frames = 1, c.release_none_frames = 1, c.cooldown_ms = 800;
+    c.gate_frames = 1, c.gate_min = 1, c.release_frames = 1, c.release_none_frames = 1, c.cooldown_ms = 800, c.repeat_rest_frames = 0;
     Seq r(c);
     r.feed("hello", 4).feed("none", 1).feed("hello", 12);
     EXPECT_EQ(r.committed(), (V{"hello", "hello"}));
@@ -186,4 +188,148 @@ TEST(Decision, ResetClearsState) {
     r.d.reset();
     r.feed("none", 30, false);
     EXPECT_TRUE(r.committed().empty());
+}
+
+
+// ---- same-word guard: ported one to one from SameWordGuardTests in server/fallback/test_decision.py ----
+namespace {
+const char* const WORDS[] = {"hello", "what", "how", "why", "where", "you"};
+
+// One long sign that the hand tracker loses twice (the idle gate closes while the model still says `w`), plus a 2-frame dip to another word.
+Seq& one_sign_with_dip(Seq& r, const std::string& w, const std::string& other) {
+    return r.feed(w, 8).feed(w, 6, false).feed(w, 8).feed(other, 2).feed(w, 8).feed(w, 5, false).feed(w, 10);
+}
+}  // namespace
+
+TEST(SameWordGuard, IsOnInTheDeployedSettings) { EXPECT_GT(CFG().repeat_rest_frames, 0); }
+
+TEST(SameWordGuard, OneLongSignWithAMidSignDipCommitsOnceForEveryWord) {
+    for (const std::string w : WORDS) {
+        Seq r;
+        one_sign_with_dip(r, w, w == "what" ? "why" : "what").feed("none", 30, false);
+        EXPECT_EQ(r.committed(), V{w}) << w;
+    }
+}
+
+TEST(SameWordGuard, WithoutTheGuardTheSameSignCommitsMoreThanOnce) {
+    DecisionCfg c = CFG();
+    c.repeat_rest_frames = 0;
+    Seq r(c);
+    r.feed("hello", 8).feed("hello", 6, false).feed("hello", 10).feed("none", 30, false);
+    EXPECT_GE(r.committed().size(), 2u);
+}
+
+TEST(SameWordGuard, TwoSeparateSignsWithTheHandsDownBetweenCommitTwiceForEveryWord) {
+    for (const std::string w : WORDS) {
+        Seq r;
+        r.feed(w, 8).feed("none", 10, false).feed(w, 8).feed("none", 30, false);
+        EXPECT_EQ(r.committed(), (V{w, w})) << w;
+    }
+}
+
+TEST(SameWordGuard, TwoSignsSeparatedOnlyByTheModelFallingBackToNoneCommitTwice) {
+    Seq r;
+    r.feed("hello", 8).feed("none", CFG().release_none_frames + 2).feed("hello", 8).feed("none", 30, false);
+    EXPECT_EQ(r.committed(), (V{"hello", "hello"}));
+}
+
+TEST(SameWordGuard, AShorterWobbleThanTheRestTimeIsStillOneSign) {
+    Seq r;
+    r.feed("hello", 8).feed("none", CFG().repeat_rest_frames - 1).feed("hello", 8).feed("none", 30, false);
+    EXPECT_EQ(r.committed(), V{"hello"});
+}
+
+TEST(SameWordGuard, TimeFallbackTheWordMayCommitAgainAfterTheCooldownWithoutBeingSeen) {
+    DecisionCfg c = CFG();
+    c.repeat_rest_p = 0.0;  // `rest` can never happen
+    const int gap = static_cast<int>(CFG().repeat_cooldown_ms / DT) + 3;
+    Seq r(c);
+    r.feed("hello", 8).feed("what", 2).feed("none", gap, true, 0.35).feed("hello", 8).feed("none", 30, false);
+    EXPECT_EQ(r.committed(), (V{"hello", "hello"}));
+}
+
+TEST(SameWordGuard, HowThenYouIsExactlyOneSentenceEvenWithFlicker) {
+    Seq r;
+    one_sign_with_dip(r, "how", "what");
+    one_sign_with_dip(r, "you", "what").feed("none", 40, false);
+    EXPECT_EQ(r.committed(), V{"how_are_you"});
+}
+
+TEST(SameWordGuard, WhereThenYouIsExactlyOneSentenceEvenWithFlicker) {
+    Seq r;
+    one_sign_with_dip(r, "where", "what");
+    one_sign_with_dip(r, "you", "what").feed("none", 40, false);
+    EXPECT_EQ(r.committed(), V{"where_are_you"});
+}
+
+TEST(SameWordGuard, YouThenWhereIsExactlyOneSentenceEvenWithFlicker) {
+    Seq r;
+    one_sign_with_dip(r, "you", "what");
+    one_sign_with_dip(r, "where", "what").feed("none", 40, false);
+    EXPECT_EQ(r.committed(), V{"where_are_you"});
+}
+
+TEST(SameWordGuard, YouAloneCommitsOnceAfterTheJoinWindow) {
+    Seq r;
+    one_sign_with_dip(r, "you", "what");
+    EXPECT_TRUE(r.committed().empty());  // held while waiting for HOW / WHERE
+    r.feed("none", 30, false);
+    EXPECT_EQ(r.committed(), V{"you"});
+}
+
+TEST(SameWordGuard, AHeldWordIsNeverEmittedAloneAndAgainInsideItsSentence) {
+    const char* pairs[3][2] = {{"how", "you"}, {"where", "you"}, {"you", "where"}};
+    for (auto& pr : pairs) {
+        Seq r;
+        r.feed(pr[0], 8).feed(pr[0], 6, false).feed(pr[0], 6);
+        r.feed(pr[1], 8).feed(pr[1], 6, false).feed(pr[1], 6).feed("none", 40, false);
+        ASSERT_EQ(r.committed().size(), 1u) << pr[0] << "+" << pr[1];
+        EXPECT_NE(r.committed()[0].find('_'), std::string::npos);
+    }
+}
+
+TEST(SameWordGuard, ADifferentWordIsNotBlockedByTheGuard) {
+    Seq r;
+    r.feed("hello", 8).feed("what", 8).feed("why", 8).feed("none", 30, false);
+    EXPECT_EQ(r.committed(), (V{"hello", "what", "why"}));
+}
+
+TEST(SameWordGuard, AThirdWordBetweenTwoEqualOnesLetsTheFirstWordCommitAgain) {
+    Seq r;
+    r.feed("hello", 8).feed("what", 8).feed("hello", 8).feed("none", 30, false);
+    EXPECT_EQ(r.committed(), (V{"hello", "what", "hello"}));
+}
+
+TEST(SameWordGuard, ResetClearsTheGuard) {
+    Seq r;
+    r.feed("hello", 8);
+    r.d.reset();
+    r.feed("hello", 8);
+    EXPECT_EQ(r.committed(), (V{"hello", "hello"}));
+}
+
+// The same long synthetic streams (words, wobble, hands flickering out of view, rests) through decision.py and decision.cpp:
+// every frame must give the same label, state and committed event.
+TEST(DecisionGolden, MatchesPythonFrameByFrame) {
+    int streams = 0, commits = 0;
+    for (const auto& st : golden()["decision"]) {
+        Decision d(cfg().labels, CFG());
+        const auto& pr = st["probs"];
+        const auto& hands = st["hands"];
+        const auto& exp = st["expected"];
+        const size_t n_lab = cfg().labels.size();
+        ASSERT_EQ(pr.size(), hands.size() * n_lab);
+        for (size_t i = 0; i < hands.size(); ++i) {
+            std::vector<double> probs(n_lab);
+            for (size_t k = 0; k < n_lab; ++k) probs[k] = pr[i * n_lab + k].get<double>();
+            const DecisionOut o = d.step(probs, hands[i].get<int>() != 0, i * 100.0);
+            ASSERT_EQ(o.label, exp[i][0].get<std::string>()) << "stream " << streams << " frame " << i;
+            ASSERT_EQ(o.state, exp[i][1].get<std::string>()) << "stream " << streams << " frame " << i;
+            ASSERT_EQ(o.committed.value_or(""), exp[i][2].get<std::string>()) << "stream " << streams << " frame " << i;
+            commits += !exp[i][2].get<std::string>().empty();
+        }
+        ++streams;
+    }
+    EXPECT_EQ(streams, 3);
+    EXPECT_GT(commits, 20);  // the streams really contain words and sentences
 }
