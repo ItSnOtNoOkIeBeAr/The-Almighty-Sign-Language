@@ -19,7 +19,8 @@ HAND_BONES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0
               (0, 13), (13, 14), (14, 15), (15, 16), (0, 17), (17, 18), (18, 19), (19, 20)]
 WHITE, TIP_RED = (255, 255, 255), (60, 60, 255)  # BGR: clean white skeleton, red fingertips
 FINGERTIPS = (4, 8, 12, 16, 20)                  # positions in a hand's 21 ids
-SMOOTH_TAU = 0.07    # seconds: display smoothing time constant (server results arrive at ~10 Hz, display runs faster)
+SMOOTH_TAU = 0.05    # seconds: smoothing time constant for a point that is nearly still (kills jitter)
+CATCHUP_PX = 12      # the further a point is behind its target, the faster it moves: tau / (1 + gap / CATCHUP_PX)
 SNAP_PX = 90         # a point that jumps further than this (keypoint-image pixels) is a new detection: no gliding
 GRACE = 0.25         # seconds a point may be missing before it is dropped (hides single-frame flicker)
 
@@ -48,11 +49,13 @@ class Smoother:
             for i in self.target:
                 self.seen[i] = now
         last, self.last = (now if self.last is None else self.last), now
-        alpha = 1 - math.exp(-max(now - last, 0.0) / SMOOTH_TAU)
+        dt = max(now - last, 0.0)
         for i, (tx, ty) in self.target.items():
             px, py = self.pos.get(i, (tx, ty))
-            if math.hypot(tx - px, ty - py) > SNAP_PX:
-                px, py = tx, ty
+            gap = math.hypot(tx - px, ty - py)
+            if gap > SNAP_PX:
+                px, py, gap = tx, ty, 0.0
+            alpha = 1 - math.exp(-dt * (1 + gap / CATCHUP_PX) / SMOOTH_TAU)  # fast hands -> big gap -> little lag
             self.pos[i] = (px + (tx - px) * alpha, py + (ty - py) * alpha)
         for i in [i for i, t in self.seen.items() if now - t > GRACE]:
             self.pos.pop(i, None), self.seen.pop(i)
