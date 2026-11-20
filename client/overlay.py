@@ -9,8 +9,10 @@ from common import put_text
 
 BANNER_SECONDS = 4.0   # how long a committed word/sentence stays on screen
 SENTENCE_TEXT = {"how_are_you": "HOW ARE YOU?", "where_are_you": "WHERE ARE YOU?"}
-# COCO-WholeBody indices the server sends: body 0-12 (5..12 = shoulders, elbows, wrists, hips) and both hands 91-132
-BODY_BONES = [(5, 6), (5, 7), (7, 9), (6, 8), (8, 10), (5, 11), (6, 12), (11, 12)]
+# COCO-WholeBody indices the server sends: body 0-12 and both hands 91-132. Only the arms are drawn:
+# shoulders 5/6, elbows 7/8, wrists 9/10 (no face points 0-4, no hips 11/12).
+ARM_IDS = [5, 6, 7, 8, 9, 10]
+BODY_BONES = [(0, 1), (0, 2), (2, 4), (1, 3), (3, 5)]  # positions in ARM_IDS (like HAND_BONES: positions in a hand's 21 ids)
 HAND_BONES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0, 9), (9, 10), (10, 11), (11, 12),
               (0, 13), (13, 14), (14, 15), (15, 16), (0, 17), (17, 18), (18, 19), (19, 20)]
 COLORS = {"body": (200, 160, 90), "left": (230, 120, 0), "right": (0, 140, 255)}  # BGR: left hand blue, right hand orange
@@ -36,7 +38,7 @@ def draw_keypoints(img, kp):
             if i in pts:
                 cv2.circle(img, pts[i], r, color, -1, cv2.LINE_AA)
 
-    bones(list(range(13)), BODY_BONES, COLORS["body"], 4)
+    bones(ARM_IDS, BODY_BONES, COLORS["body"], 4)
     bones(list(range(91, 112)), HAND_BONES, COLORS["left"], 3)
     bones(list(range(112, 133)), HAND_BONES, COLORS["right"], 3)
 
