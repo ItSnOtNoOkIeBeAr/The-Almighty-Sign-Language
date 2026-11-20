@@ -97,5 +97,51 @@ class MenuTests(unittest.TestCase):
                 self.assertFalse(ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah, f"{a.key} overlaps {b.key}")
 
 
+class Link:  # just what menu.recognised reads from client.Link
+    def __init__(self, result=None, phrase=((), 0.0)):
+        self.result, self.phrase = result, phrase
+
+
+class CamViewTests(unittest.TestCase):
+    def setUp(self):
+        import numpy as np
+        self.preview = np.full((480, 640, 3), 90, np.uint8)
+
+    def test_canvas_has_the_side_panel_and_grows_for_a_pinned_guide(self):
+        plain, _ = menu.cam_view(self.preview, menu.Mouse(), None, None)
+        pinned, _ = menu.cam_view(self.preview, menu.Mouse(), "hello", None)
+        self.assertEqual(plain.shape, (480, 640 + menu.PANEL_W, 3))
+        self.assertEqual(pinned.shape[1], plain.shape[1])
+        self.assertGreater(pinned.shape[0], plain.shape[0])
+
+    def test_clicking_each_word_button_returns_that_word(self):
+        for b in menu.cam_buttons(640):
+            m = menu.Mouse()
+            click(m, b)
+            self.assertEqual(menu.cam_view(self.preview, m, None, None)[1], b.key)
+
+    def test_click_on_the_preview_is_not_a_word(self):
+        m = menu.Mouse()
+        m.clicked = (100, 100)
+        self.assertIsNone(menu.cam_view(self.preview, m, None, None)[1])
+
+    def test_recognised_word_button_is_green(self):
+        b = next(b for b in menu.cam_buttons(640) if b.key == "what")
+        x, y, w, h = b.rect
+        lit, _ = menu.cam_view(self.preview, menu.Mouse(), None, "what")
+        off, _ = menu.cam_view(self.preview, menu.Mouse(), None, None)
+        self.assertEqual(tuple(lit[y + 3, x + 3]), menu.GREEN_HOT)
+        self.assertNotEqual(tuple(off[y + 3, x + 3]), menu.GREEN_HOT)
+
+    def test_recognised(self):
+        import time
+        now = time.time()
+        self.assertEqual(menu.recognised(Link(phrase=(("hello", "how_are_you"), now - 0.5)), now), "how_are_you")
+        self.assertEqual(menu.recognised(Link({"label": "where", "confidence": 0.8}), now), "where")
+        self.assertIsNone(menu.recognised(Link({"label": "where", "confidence": 0.3}), now))
+        self.assertIsNone(menu.recognised(Link({"label": "none", "confidence": 0.9}), now))
+        self.assertIsNone(menu.recognised(Link(phrase=(("hello",), now - 10), result=None), now))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 """Laptop client: webcam -> JPEG -> WebSocket -> label overlay. CPU only (opencv, websockets, numpy).
 
-  python client/client.py [--url wss://<host>/ws]       Home screen: pick a word to see how it is signed, or Free cam (m = back to Home, q quits;
+  python client/client.py [--url wss://<host>/ws]       Home screen: pick a word to see how it is signed, or Free cam (click a word for its picture, h = hide it, m = back to Home, q quits;
                                                         in Free cam k = toggle skeleton (on by default), d = details); token from SIGNLANG_TOKEN
   python client/client.py --free-cam                    skip the Home screen
   python client/client.py --headless --duration 10      no window, prints results + latency summary
@@ -200,16 +200,19 @@ class CamSession:
 
 
 def run_ui(cfg, token, free_cam):
-    """The window: Home (word cards + Free cam) -> how-to guide -> Free cam. q quits, m returns to Home."""
+    """The window: Home (word cards + Free cam) -> how-to guide -> Free cam. q quits, m returns to Home, h hides the pinned picture."""
     mouse = menu.Mouse()
     cv2.namedWindow(WINDOW)
     cv2.setMouseCallback(WINDOW, mouse.on_event)
-    screen, word, session = ("cam", None, None) if free_cam else ("home", None, None)
+    screen, word, session, pinned = ("cam", None, None, None) if free_cam else ("home", None, None, None)
     try:
         while True:
             if screen == "cam":
                 session = session or CamSession(cfg, token)
-                img, action = session.frame(), None
+                img, hit = menu.cam_view(session.frame(), mouse, pinned, menu.recognised(session.link, time.time()))
+                action = None
+                if hit:  # clicking a word pins its how-to picture; clicking it again hides it
+                    pinned = None if hit == pinned else hit
             elif screen == "guide":
                 img, action = menu.render_guide(mouse, word)
             else:
@@ -220,7 +223,9 @@ def run_ui(cfg, token, free_cam):
                 break
             if screen == "cam":
                 session.key(key)
-                if key == ord("m"):
+                if key == ord("h"):
+                    pinned = None
+                elif key == ord("m"):
                     action = ("home", None)
             elif key == 27:
                 action = ("home", None)
@@ -229,6 +234,7 @@ def run_ui(cfg, token, free_cam):
                     session.close()
                     session = None
                 screen, word = action
+                pinned = word if screen == "cam" else None
     finally:
         if session:
             session.close()

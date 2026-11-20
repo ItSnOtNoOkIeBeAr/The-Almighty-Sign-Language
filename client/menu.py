@@ -92,3 +92,44 @@ def render_guide(mouse, word):
         draw_button(img, b, mouse)
     key = clicked(buttons, mouse)
     return img, (None if key is None else ("home", None) if key == "home" else ("cam", word))
+
+
+# --- Free cam: word buttons in a side panel + the pinned how-to picture under the preview ---
+PANEL_W, GUIDE_MAX_W, RECOGNISED_SECONDS = 230, 640, 2.0
+
+
+def cam_buttons(x0):
+    return [Button(w, guides.TITLES[w], (x0 + 10, 50 + i * 52, PANEL_W - 20, 44)) for i, w in enumerate(guides.ORDER)]
+
+
+def recognised(link, now):
+    """The word to light up: a committed word/sentence from the last RECOGNISED_SECONDS, else the live prediction if it is confident."""
+    words, t = link.phrase
+    if words and now - t < RECOGNISED_SECONDS:
+        return words[-1]
+    r = link.result or {}
+    return r["label"] if r.get("label", "none") != "none" and r.get("confidence", 0.0) >= 0.5 else None
+
+
+def cam_view(preview, mouse, pinned, live):
+    """preview: the camera picture. Returns (canvas, clicked word or None): preview | side panel of word buttons, and under them the
+    how-to picture of the pinned word. A button is green while that word is recognised; the pinned one has a white outline."""
+    ph, pw = preview.shape[:2]
+    card = None
+    if pinned:
+        card = guides.guide_image(pinned)
+        gw = min(pw + PANEL_W, GUIDE_MAX_W)
+        card = cv2.resize(card, (gw, int(card.shape[0] * gw / card.shape[1])), interpolation=cv2.INTER_AREA)
+    top = max(ph, 50 + len(guides.ORDER) * 52)
+    canvas = np.full((top + (card.shape[0] if card is not None else 0), pw + PANEL_W, 3), BG, np.uint8)
+    canvas[:ph, :pw] = preview
+    put_text(canvas, "Signs (click for help)", (pw + 10, 32), 0.55, (220, 220, 220))
+    buttons = cam_buttons(pw)
+    for b in buttons:
+        draw_button(canvas, b, mouse, active=(b.key == live), scale=0.55)
+        if b.key == pinned:
+            x, y, w, h = b.rect
+            cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 2)
+    if card is not None:
+        canvas[top:, :card.shape[1]] = card
+    return canvas, clicked(buttons, mouse)

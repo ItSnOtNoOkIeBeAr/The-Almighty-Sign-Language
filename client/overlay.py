@@ -161,7 +161,7 @@ def draw_overlay(img, link, disp_fps, details):
     lat = (f"{rtt:.0f} ms round trip" if rtt is not None else "- ms") + f"  |  server {sm.get('total', 0):.1f} ms"
     (tw, _), _ = cv2.getTextSize(lat, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
     put_text(img, lat, (w - tw - 10, h - 12), 0.5, (200, 255, 200))
-    put_text(img, "k skeleton   d details   q quit", (10, h - 12), 0.45, (190, 190, 190))
+    put_text(img, "k skeleton  d details  m menu  q quit", (10, h - 12), 0.45, (190, 190, 190))
     if details:
         put_text(img, "committed: " + (" > ".join(link.history) or "-"), (10, 140), 0.55, (0, 255, 255))
         put_text(img, f"state {r.get('state', '-')}  conf {conf * 100:.0f}%  server dec {sm.get('decode', 0):.1f} kp {sm.get('keypoints', 0):.1f} "
