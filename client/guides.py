@@ -98,10 +98,10 @@ def hello_1(img): draw_head(img); draw_hand(img, (236, 138), "flat", -30, 52)
 def hello_2(img): draw_head(img); draw_hand(img, (210, 170), "flat", 35, 48); arrow(img, (192, 38), (275, 26))
 def what_1(img): draw_head(img, (150, 40), 24); draw_hand(img, (92, 240), "open", -12, 46); draw_hand(img, (208, 240), "open", 12, 46, mirror=True)
 def what_2(img): what_1(img); arrow(img, (150, 128), (250, 128)); arrow(img, (150, 128), (50, 128))
-def how_1(img): draw_head(img, (150, 40), 24); draw_hand(img, (120, 236), "fist", 6, 46); draw_hand(img, (180, 236), "fist", -6, 46, mirror=True)
+def how_1(img): draw_head(img, (150, 40), 24); draw_hand(img, (96, 238), "open", -30, 46); draw_hand(img, (204, 238), "open", 30, 46, mirror=True)
 def how_2(img):
-    draw_head(img, (150, 40), 24); draw_hand(img, (96, 238), "open", -30, 46); draw_hand(img, (204, 238), "open", 30, 46, mirror=True)
-    arrow(img, (132, 140), (88, 108)); arrow(img, (168, 140), (212, 108))
+    draw_head(img, (150, 40), 24); draw_hand(img, (120, 236), "fist", 6, 46); draw_hand(img, (180, 236), "fist", -6, 46, mirror=True)
+    arrow(img, (88, 108), (126, 140)); arrow(img, (212, 108), (174, 140))
 def why_1(img): hello_1(img)
 def why_2(img): draw_head(img); draw_hand(img, (225, 178), "Y", 15, 50); arrow(img, (186, 56), (232, 96))
 def where_1(img): draw_head(img, (150, 40), 24); draw_hand(img, (150, 240), "point", -4, 52)
@@ -117,11 +117,11 @@ FRAMES["how_are_you"] = FRAMES["how"] + FRAMES["you"]
 FRAMES["where_are_you"] = FRAMES["where"] + FRAMES["you"]
 STEPS = {"hello": ["Flat hand at your forehead", "Move it outward, like a salute"],
          "what": ["Both palms up, fingers open", "Shake the hands side to side"],
-         "how": ["Fists together, knuckles touching", "Roll them outward into open palms"],
+         "how": ["Open hands, angled outward", "Flip them in and close into fists, knuckles together"],
          "why": ["Fingertips touch your forehead", "Pull away, ending in a Y hand"],
          "where": ["Index finger up", "Shake it side to side"],
          "you": ["Point at the other person (diagonal is fine)"],
-         "how_are_you": ["HOW: fists together", "...roll to open palms", "YOU: point at them, diagonal"],
+         "how_are_you": ["HOW: open hands, angled out", "...flip in and close into fists", "YOU: point at them, diagonal"],
          "where_are_you": ["WHERE: index finger up", "...shake it side to side", "YOU: point at them, diagonal"]}
 
 _cache = {}
