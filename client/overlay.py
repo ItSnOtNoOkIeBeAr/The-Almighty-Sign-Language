@@ -29,7 +29,8 @@ ARM_MIN_SCORE = 0.5  # arm points are guesses when the arm is out of view: deman
 EDGE_PX = 12         # arm points this close to (or beyond) the frame edge are clamped guesses, not seen joints
 HAND_MIN_SCORE = 0.5   # a real hand is detected confidently: mean score of its points
 HAND_MIN_POINTS = 14   # ... and most of its 21 points are seen
-HAND_ARM_REACH = 1.3   # ... and it is at the end of a detected arm: its wrist is within this x its own size (+ a margin) of an arm wrist
+HAND_ARM_REACH = 1.3   # ... and it is at the end of a detected arm: its wrist is within this x its own size (+ a margin) of an arm wrist,
+HAND_BODY_REACH = 5.0  # ... or within this many face widths of your nose (arm out of view)
 GRACE = 0.25         # seconds a point may be missing before it is dropped (hides single-frame flicker)
 
 
@@ -38,9 +39,19 @@ def label_text(label):
     return SENTENCE_TEXT.get(label, label.replace("_", " ").upper())
 
 
-def drop_stray_hands(pts, scores, width):
-    """Keep a hand only if it is plausibly YOURS: confident, mostly complete, and attached to a detected arm (an elbow-and-wrist pair that
-    survived the arm filter). Objects and background clutter that the model labels as a hand have no arm behind them and are dropped."""
+def face_anchor(pts):
+    """(nose position, face width) from the face dots, or None. Face width = ear to ear (else eye to eye x 2): the person's own scale."""
+    if 0 not in pts:
+        return None
+    dist = lambda a, b: math.hypot(pts[a][0] - pts[b][0], pts[a][1] - pts[b][1]) if a in pts and b in pts else None  # noqa: E731
+    width = dist(3, 4) or (2 * dist(1, 2) if dist(1, 2) else None)
+    return (pts[0], width) if width else None
+
+
+def drop_stray_hands(pts, scores, face):
+    """Keep a hand only if it is plausibly YOURS: confident, mostly complete, and either at the end of a detected arm or within arm's
+    reach of your face (the forearm is often out of the picture when a hand is raised). `face` = face_anchor() taken before the arm filter.
+    Objects and background clutter the model labels as a hand fail these tests and are dropped."""
     arms = [pts[i] for i in (9, 10) if i in pts]
     for first in (91, 112):
         ids = [i for i in range(first, first + 21) if i in pts]
@@ -49,9 +60,9 @@ def drop_stray_hands(pts, scores, width):
         xs, ys = [pts[i][0] for i in ids], [pts[i][1] for i in ids]
         size = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
         wrist = pts.get(first, (sum(xs) / len(xs), sum(ys) / len(ys)))
-        reach = HAND_ARM_REACH * size + 0.04 * width
-        if not (len(ids) >= HAND_MIN_POINTS and sum(scores[i] for i in ids) / len(ids) >= HAND_MIN_SCORE
-                and any(math.hypot(wrist[0] - ax, wrist[1] - ay) <= reach for ax, ay in arms)):
+        on_arm = any(math.hypot(wrist[0] - ax, wrist[1] - ay) <= HAND_ARM_REACH * size + 20 for ax, ay in arms)
+        near_face = bool(face) and math.hypot(wrist[0] - face[0][0], wrist[1] - face[0][1]) <= HAND_BODY_REACH * face[1]
+        if not (len(ids) >= HAND_MIN_POINTS and sum(scores[i] for i in ids) / len(ids) >= HAND_MIN_SCORE and (on_arm or near_face)):
             for i in ids:
                 del pts[i]
     return pts
@@ -99,11 +110,12 @@ class Smoother:
             self.msg = kp
             self.target = {int(i): (x, y) for i, x, y, s in kp["pts"] if s >= thr and x >= 0}
             scores, w, h = {int(i): s for i, _, _, s in kp["pts"]}, kp["w"], kp["h"]
+            face = face_anchor(self.target)
             for side in ARM_SIDES:  # a whole side is shown or hidden: an arm that is out of view gets guessed joints
                 if not all(self._seen_arm(i, scores, w, h) for i in side[1:]):  # elbow and wrist must really be seen
                     for i in side:
                         self.target.pop(i, None)
-            self.target = drop_ghost_hand(drop_stray_hands(self.target, scores, w), scores)
+            self.target = drop_ghost_hand(drop_stray_hands(self.target, scores, face), scores)
             for i in self.target:
                 self.seen[i] = now
         last, self.last = (now if self.last is None else self.last), now

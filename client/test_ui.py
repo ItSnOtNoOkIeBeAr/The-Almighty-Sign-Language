@@ -174,9 +174,18 @@ class HandFilterTests(unittest.TestCase):
         self.assertEqual(self.kept(self.arm(91) + self.hand(91, 300, 400, score=0.4)), set())
         self.assertEqual(self.kept(self.arm(91) + self.hand(91, 300, 400, n=8)), set())
 
-    def test_arm_off_screen_means_no_hand(self):
-        off = [[5, 300, 200, 0.9], [7, 300, 300, 0.9], [9, 300, 479, 0.9]]  # wrist clamped at the bottom edge: that side is hidden
-        self.assertEqual(self.kept(off + self.hand(91, 300, 440)), set())
+    FACE = [[0, 320, 150, 0.9], [1, 300, 140, 0.9], [2, 340, 140, 0.9], [3, 270, 150, 0.9], [4, 370, 150, 0.9]]  # ear to ear = 100 px
+
+    def test_raised_hand_with_the_arm_out_of_frame_is_kept_near_the_face(self):
+        off = [[5, 300, 200, 0.9], [7, 300, 300, 0.9], [9, 300, 479, 0.9]]  # forearm leaves the picture: that arm side is hidden
+        self.assertEqual(len(self.kept(self.FACE + off + self.hand(91, 330, 330))), 21)
+
+    def test_hand_far_from_the_face_and_with_no_arm_is_dropped(self):
+        small = [[0, 320, 150, 0.9], [1, 310, 145, 0.9], [2, 330, 145, 0.9], [3, 300, 150, 0.9], [4, 340, 150, 0.9]]  # ears 40 px apart: reach 200 px
+        self.assertEqual(self.kept(small + self.hand(91, 40, 440)), set())  # ~400 px away = 10 face widths
+
+    def test_hand_without_face_or_arm_is_dropped(self):
+        self.assertEqual(self.kept(self.hand(91, 330, 330)), set())
 
     def test_two_real_hands_both_kept(self):
         self.assertEqual(len(self.kept(self.arm(91, 200) + self.hand(91, 200, 400) + self.arm(112, 440) + self.hand(112, 440, 400))), 42)
