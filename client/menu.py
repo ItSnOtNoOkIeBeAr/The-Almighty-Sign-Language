@@ -7,7 +7,8 @@ import cv2
 import numpy as np
 
 import guides
-from common import put_text
+from common import put_text, text_size
+from textfx import rounded_box
 
 W, H = 960, 540                         # size of the Home / guide screens
 BG, CARD, CARD_HOT, BORDER = (32, 30, 28), (62, 58, 54), (96, 88, 80), (110, 106, 100)
@@ -44,12 +45,11 @@ class Button:
         return x + w // 2, y + h // 2
 
 
-def draw_button(img, b, mouse, active=False, scale=0.7):
+def draw_button(img, b, mouse, active=False, scale=0.7, pinned=False):
     x, y, w, h = b.rect
-    fill = GREEN_HOT if active else (b.hot if b.hit((mouse.x, mouse.y)) else b.color)
-    cv2.rectangle(img, (x, y), (x + w, y + h), fill, -1)
-    cv2.rectangle(img, (x, y), (x + w, y + h), BORDER, 1)
-    (tw, th), _ = cv2.getTextSize(b.label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+    fill = GREEN_HOT if active else (b.hot if pinned or b.hit((mouse.x, mouse.y)) else b.color)
+    rounded_box(img, b.rect, fill, 1.0, radius=14, border=WHITE if pinned else BORDER)
+    tw, th = text_size(b.label, scale, 2)
     put_text(img, b.label, (x + (w - tw) // 2, y + (h + th) // 2), scale, WHITE, 2)
 
 
@@ -126,10 +126,7 @@ def cam_view(preview, mouse, pinned, live):
     put_text(canvas, "Signs (click for help)", (pw + 10, 32), 0.55, (220, 220, 220))
     buttons = cam_buttons(pw)
     for b in buttons:
-        draw_button(canvas, b, mouse, active=(b.key == live), scale=0.55)
-        if b.key == pinned:
-            x, y, w, h = b.rect
-            cv2.rectangle(canvas, (x, y), (x + w, y + h), WHITE, 2)
+        draw_button(canvas, b, mouse, active=(b.key == live), scale=0.55, pinned=(b.key == pinned))
     if card is not None:
         canvas[top:, :card.shape[1]] = card
     return canvas, clicked(buttons, mouse)

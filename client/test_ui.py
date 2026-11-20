@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import guides  # noqa: E402
 import menu  # noqa: E402
+import textfx  # noqa: E402
 
 LABELS = json.loads((Path(__file__).resolve().parent.parent / "protocol" / "labels.json").read_text())
 
@@ -130,8 +131,8 @@ class CamViewTests(unittest.TestCase):
         x, y, w, h = b.rect
         lit, _ = menu.cam_view(self.preview, menu.Mouse(), None, "what")
         off, _ = menu.cam_view(self.preview, menu.Mouse(), None, None)
-        self.assertEqual(tuple(lit[y + 3, x + 3]), menu.GREEN_HOT)
-        self.assertNotEqual(tuple(off[y + 3, x + 3]), menu.GREEN_HOT)
+        self.assertEqual(tuple(lit[y + h // 2, x + 12]), menu.GREEN_HOT)
+        self.assertNotEqual(tuple(off[y + h // 2, x + 12]), menu.GREEN_HOT)
 
     def test_recognised(self):
         import time
@@ -189,6 +190,55 @@ class HandFilterTests(unittest.TestCase):
 
     def test_two_real_hands_both_kept(self):
         self.assertEqual(len(self.kept(self.arm(91, 200) + self.hand(91, 200, 400) + self.arm(112, 440) + self.hand(112, 440, 400))), 42)
+
+
+class TextFxTests(unittest.TestCase):
+    def blank(self):
+        import numpy as np
+        return np.full((120, 300, 3), 40, np.uint8)
+
+    def test_text_is_drawn_inside_its_size_and_nowhere_else(self):
+        import numpy as np
+        img = self.blank()
+        textfx.draw_text(img, "Hello", (20, 80), 1.0, (255, 255, 255), 2)
+        w, h = textfx.text_size("Hello", 1.0, 2)
+        ys, xs = np.nonzero((img != 40).any(axis=2))
+        self.assertTrue(len(xs) > 100)
+        self.assertGreaterEqual(xs.min(), 20 - 6)
+        self.assertLessEqual(xs.max(), 20 + w + 6)
+        self.assertLessEqual(ys.max(), 80 + 12)            # descenders only a little below the baseline
+        self.assertGreaterEqual(ys.min(), 80 - h - 8)
+
+    def test_bigger_scale_is_bigger(self):
+        self.assertGreater(textfx.text_size("Hello", 2.0)[0], textfx.text_size("Hello", 1.0)[0])
+        self.assertGreater(textfx.text_size("Hello again", 1.0)[0], textfx.text_size("Hello", 1.0)[0])
+
+    def test_drawing_past_the_edges_does_not_crash(self):
+        img = self.blank()
+        for org in ((-50, 50), (280, 50), (20, -10), (20, 400), (-500, -500)):
+            textfx.draw_text(img, "Edge", org, 1.0)
+            textfx.rounded_box(img, (org[0], org[1], 80, 40), (0, 0, 255), 0.5)
+
+    def test_falls_back_to_opencv_without_a_font(self):
+        import numpy as np
+        saved = textfx._font
+        textfx._font = lambda px, bold: None
+        try:
+            self.assertFalse(textfx.available())
+            img = self.blank()
+            textfx.draw_text(img, "Hi", (20, 80), 1.0)
+            self.assertTrue((img != 40).any())
+            self.assertGreater(textfx.text_size("Hi", 1.0)[0], 0)
+        finally:
+            textfx._font = saved
+
+    def test_rounded_box_blends_and_rounds(self):
+        img = self.blank()
+        textfx.rounded_box(img, (50, 30, 100, 60), (200, 200, 200), 0.5, radius=20, border=(0, 0, 255))
+        self.assertTrue(abs(int(img[60, 100, 0]) - 120) <= 1)       # 40 + (200 - 40) / 2 in the middle
+        self.assertEqual(tuple(img[30, 50]), (40, 40, 40))           # the corner is cut off
+        self.assertEqual(tuple(img[30, 100]), (0, 0, 255))           # border on the straight top side
+        self.assertEqual(tuple(img[10, 10]), (40, 40, 40))           # nothing outside the box
 
 
 if __name__ == "__main__":

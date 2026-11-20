@@ -21,7 +21,7 @@ Full spec: `governance/BUILD_SPEC.md` (source of truth). Progress: `governance/S
 - ASL, public data only (ASL Citizen, license: non-commercial research, never commit/share the data; `data/public/` is gitignored).
 - GPU: RTX 5060 Ti, sm_120. CUDA 13.2. MSVC 19.42. CMake 3.29.5 + Ninja (from VS 2022).
 - Runtime is C++/CUDA. Python only for training, tests, the client and the fallback server.
-- The client runs on a CPU-only laptop: opencv-python, websockets, numpy only.
+- The client runs on a CPU-only laptop: opencv-python, websockets, numpy, plus Pillow for the on-screen font (optional: without it, or without a Windows system font, text falls back to OpenCV's font). `pip install -r client/requirements.txt`.
 
 ## Current phase
 Phases 0-3, 7, 8 done; 4, 5, 6 done in the C++ server (2026-11-19, see STATUS). Order was 0,1,2,3,7,8, then 4,5,6,9,10 (BUILD_SPEC section 13).

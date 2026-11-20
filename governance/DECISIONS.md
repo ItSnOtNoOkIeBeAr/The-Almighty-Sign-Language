@@ -150,3 +150,7 @@ Detectors (a person box was found in 1398 of 1399 frames by both): YOLOX-m ORT 2
 - **Pictures drawn in code, not generated images:** no image generator is available and the repo must not carry downloaded artwork (licences). Schematic diagrams are consistent with the skeleton overlay, need no files and are unit-tested; `client/guides/<word>.png` lets real pictures replace them without code changes.
 - **The pinned picture sits under the preview** (window grows from 640x480 to about 870x730), because an overlay would cover the signer or the result banner.
 - **Camera and connection only run in Free cam:** Home costs nothing and the camera light is off there.
+
+## Pillow for the client font (2026-11-21)
+- **Pillow added to the client (user's choice) with a system font, not a bundled one:** OpenCV only has basic fonts and its freetype module is not in opencv-python. A Windows system font means no font file or licence in the repo; if Pillow or the font is missing the client falls back to OpenCV text, so the live demo cannot break because of it.
+- **Text is rendered into small cached masks and blended into the frame** (not a full-frame numpy<->PIL conversion per text), to keep the per-frame cost a few milliseconds.

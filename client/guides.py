@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 import overlay
-from common import CLIENT_DIR, put_text
+from common import CLIENT_DIR, put_text, text_size
 
 CARD_W, CARD_H = 1020, 400
 PW, PH = 300, 250                       # one frame (panel) inside the card
@@ -140,7 +140,7 @@ def render(word):
         card[75:75 + PH, x:x + PW] = panel
         cv2.circle(card, (x + 18, 93), 13, ARROW, -1, cv2.LINE_AA)
         cv2.putText(card, str(n + 1), (x + 12, 99), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2, cv2.LINE_AA)
-        (tw, _), _ = cv2.getTextSize(step, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+        tw, _ = text_size(step, 0.55)
         put_text(card, step, (x + (PW - tw) // 2, 75 + PH + 30), 0.55, (230, 230, 230))
         if n:
             cv2.arrowedLine(card, (x - 34, 75 + PH // 2), (x - 8, 75 + PH // 2), GREY, 2, cv2.LINE_AA, tipLength=0.4)

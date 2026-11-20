@@ -6,8 +6,10 @@ import time
 
 import cv2
 
-from common import put_text
+from common import put_text, text_size
+from textfx import rounded_box
 
+PANEL, ACCENT, GOOD, WARN = (24, 22, 20), (170, 215, 60), (110, 210, 90), (0, 165, 255)  # BGR: HUD panels, accents
 BANNER_SECONDS = 5.0   # the banner stays this long after the newest word; a new word restarts the timer
 MAX_BANNER_WORDS = 6   # older words scroll off so the line stays readable
 SENTENCE_TEXT = {"how_are_you": "HOW ARE YOU?", "where_are_you": "WHERE ARE YOU?"}
@@ -158,23 +160,37 @@ def draw_keypoints(img, kp, smoother=None):
 
 
 def draw_banner(img, link):
-    """Big, centred, bottom-third banner with the newest committed word or sentence (words accumulate; fades out BANNER_SECONDS after the newest)."""
+    """Centred rounded banner (bottom third) with every word/sentence signed in the last BANNER_SECONDS. A thin bar under the text
+    shows how long it stays: it shrinks to nothing, then the next sign starts a fresh line."""
     words, t = link.phrase
     age = time.time() - t
     if not words or age > BANNER_SECONDS:
         return
     text, h, w = " ".join(label_text(x) for x in words), img.shape[0], img.shape[1]
     scale = 3.0
-    while scale > 0.8 and cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 6)[0][0] > 0.9 * w:
+    while scale > 0.8 and text_size(text, scale, 2)[0] > 0.84 * w:
         scale -= 0.2
-    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 6)
-    alpha = 0.75 if age < BANNER_SECONDS - 1 else 0.75 * (BANNER_SECONDS - age)  # last second: fade
-    y0, y1 = int(h * 0.68), int(h * 0.68) + th + 50
-    box = img.copy()
-    cv2.rectangle(box, (0, y0), (w, y1), (30, 30, 30), -1)
-    cv2.addWeighted(box, alpha, img, 1 - alpha, 0, img)
-    org = ((w - tw) // 2, y1 - 25)
-    put_text(img, text, org, scale, (255, 255, 255), 6)  # same-thickness outline (see common.put_text)
+    tw, th = text_size(text, scale, 2)
+    pad_x, pad_y = 36, 24
+    bw, bh = tw + 2 * pad_x, th + 2 * pad_y + 12
+    x, y = (w - bw) // 2, int(h * 0.64)
+    fade = 1.0 if age < BANNER_SECONDS - 1 else BANNER_SECONDS - age  # last second: fade out
+    rounded_box(img, (x, y, bw, bh), PANEL, 0.74 * fade, radius=24)
+    left = max(6, int(tw * (1 - age / BANNER_SECONDS)))
+    rounded_box(img, (x + pad_x, y + bh - 16, left, 5), ACCENT, fade, radius=2)
+    put_text(img, text, (x + pad_x, y + pad_y + th), scale, WHITE, 2)
+
+
+def draw_pill(img, text, x, y, scale=0.5, color=WHITE, dot=None, right=False):
+    """Small rounded label. (x, y) = top-left, or top-right with right=True. Returns its width."""
+    tw, th = text_size(text, scale)
+    w = tw + 24 + (16 if dot else 0)
+    x = x - w if right else x
+    rounded_box(img, (x, y, w, th + 16), PANEL, 0.62, radius=(th + 16) // 2)
+    if dot:
+        cv2.circle(img, (x + 15, y + (th + 16) // 2), 5, dot, -1, cv2.LINE_AA)
+    put_text(img, text, (x + 12 + (16 if dot else 0), y + 8 + th), scale, color)
+    return w
 
 
 def draw_overlay(img, link, disp_fps, details):
@@ -182,23 +198,24 @@ def draw_overlay(img, link, disp_fps, details):
     ok = link.state == "connected"
     h, w = img.shape[:2]
     draw_banner(img, link)
-    # top-left: connection (small) and the current prediction with its confidence
-    put_text(img, link.state + (f"  [{link.error}]" if link.error else ""), (10, 24), 0.55, (0, 255, 0) if ok else (0, 165, 255))
-    put_text(img, f"{r.get('label', '-')}", (10, 62), 1.0, (255, 255, 255), 2)
+    # top-left: connection chip, then a card with the current prediction and its confidence
+    draw_pill(img, link.state + (f"  [{link.error}]" if link.error else ""), 10, 10, 0.5, WHITE, dot=GOOD if ok else WARN)
     conf = float(r.get("confidence", 0.0))
-    cv2.rectangle(img, (10, 72), (190, 86), (60, 60, 60), -1)
-    cv2.rectangle(img, (10, 72), (10 + int(180 * conf), 86), (0, 200, 0), -1)
+    rounded_box(img, (10, 48, 236, 70), PANEL, 0.62, radius=16)
+    put_text(img, str(r.get("label", "-")).replace("_", " ").upper(), (24, 84), 0.95, WHITE, 2)
+    rounded_box(img, (24, 98, 208, 8), (84, 80, 76), 1.0, radius=4)
+    rounded_box(img, (24, 98, max(8, int(208 * conf)), 8), GOOD if conf >= 0.5 else WARN, 1.0, radius=4)
     if r.get("profile") == "fallback":
-        put_text(img, "SAFE MODE: small keypoint model", (10, 110), 0.5, (0, 165, 255))
-    # bottom-right: latency readout, small
+        draw_pill(img, "SAFE MODE: small keypoint model", 10, 128, 0.45, WARN)
+    # bottom: key hints (left) and latency (right)
     rtt, sm = r.get("rtt_ms"), r.get("server_ms", {})
     lat = (f"{rtt:.0f} ms round trip" if rtt is not None else "- ms") + f"  |  server {sm.get('total', 0):.1f} ms"
-    (tw, _), _ = cv2.getTextSize(lat, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-    put_text(img, lat, (w - tw - 10, h - 12), 0.5, (200, 255, 200))
-    put_text(img, "k skeleton  d details  m menu  q quit", (10, h - 12), 0.45, (190, 190, 190))
+    draw_pill(img, "k skeleton   d details   m menu   q quit", 10, h - 38, 0.45, (205, 205, 205))
+    draw_pill(img, lat, w - 10, h - 38, 0.45, (200, 255, 200), right=True)
     if details:
-        put_text(img, "committed: " + (" > ".join(link.history) or "-"), (10, 140), 0.55, (0, 255, 255))
+        rounded_box(img, (10, 164, min(w - 20, 640), 92), PANEL, 0.62, radius=14)
+        put_text(img, "committed: " + (" > ".join(link.history) or "-"), (24, 190), 0.5, (0, 255, 255))
         put_text(img, f"state {r.get('state', '-')}  conf {conf * 100:.0f}%  server dec {sm.get('decode', 0):.1f} kp {sm.get('keypoints', 0):.1f} "
-                      f"temp {sm.get('temporal', 0):.1f} ms", (10, 165), 0.5)
+                      f"temp {sm.get('temporal', 0):.1f} ms", (24, 218), 0.45)
         put_text(img, f"send {link.send_fps():.1f} fps | display {disp_fps:.0f} fps | server-dropped {r.get('dropped_frames', 0)} | skipped {link.skipped}",
-                 (10, 190), 0.5)
+                 (24, 244), 0.45)
