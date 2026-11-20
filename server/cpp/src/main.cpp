@@ -1,6 +1,7 @@
 // signlang_server: C++/CUDA sign-language recognition server.
 //   signlang_server [--root DIR] [--profile primary|fallback] [--port N] [--mode full|safe]  serve (needs SIGNLANG_TOKEN); safe = fallback profile
 //                  [--inject-delay-ms N]  failure injection: slows every frame, to exercise the tier-1 degrade
+//                  [--diag-log FILE]      live diagnostics: one CSV line per frame (probabilities, top 3, decision, hand detection)
 //   signlang_server --extract IN_DIR OUT.json [--blob OUT.f32]           keypoints of every *.jpg in IN_DIR (parity checks)
 //   signlang_server --bench N JPEG_FILE                                  per-stage latency percentiles on one frame
 #include <spdlog/spdlog.h>
@@ -67,7 +68,7 @@ int run_bench(Pipeline& pipe, int n, const std::string& jpeg_file) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string root_hint, profile, extract_dir, extract_out, blob_path, bench_file;
+    std::string root_hint, profile, extract_dir, extract_out, blob_path, bench_file, diag_path;
     int bench_n = 0, port = 0, inject_delay = 0;
     std::string mode = "full";
     for (int i = 1; i < argc; ++i) {
@@ -78,6 +79,7 @@ int main(int argc, char** argv) {
         else if (a == "--port") port = std::stoi(next());
         else if (a == "--mode") mode = next();
         else if (a == "--inject-delay-ms") inject_delay = std::stoi(next());
+        else if (a == "--diag-log") diag_path = next();
         else if (a == "--extract") extract_dir = next(), extract_out = next();
         else if (a == "--blob") blob_path = next();
         else if (a == "--bench") bench_n = std::stoi(next()), bench_file = next();
@@ -98,6 +100,7 @@ int main(int argc, char** argv) {
         }
         Pipeline pipe(cfg);
         if (inject_delay > 0) pipe.set_inject_delay_ms(inject_delay);  // failure injection: every frame is this much slower
+        if (!diag_path.empty()) pipe.open_diag(diag_path);  // live diagnostics: per-frame class probabilities, numbers only
         if (!extract_dir.empty()) return run_extract(pipe, extract_dir, extract_out, blob_path);
         if (bench_n > 0) return run_bench(pipe, bench_n, bench_file);
         NetServer server(cfg, pipe, token);

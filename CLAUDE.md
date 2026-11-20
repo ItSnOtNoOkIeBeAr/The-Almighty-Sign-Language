@@ -29,7 +29,8 @@ Both servers run the REAL pipeline (RTMW-x 384x288 keypoints -> SignNet -> decis
 `server/cpp` (signlang_server.exe, TensorRT FP16, p50 ~5 ms/frame) is the primary; `server/fallback/fallback_server.py` (ORT, p50 ~22 ms) is the backup.
 Only ONE of them can own port 8765 at a time (the tunnel points at it). The user's live check (`docs/LIVE_CHECK.md`) is pending: do not tune anything until the user sends it.
 Deadline Nov 28; the C++ path passed parity (Nov 19). Phase 9 essentials (network hardening + ASan, soak, failure injection, tier-1 degrade, `--mode safe`) and
-Phase 10 (scripts, README, docs/DEMO_CHECKLIST.md, docs/RESULTS.md) are done (STATUS "Hardening round 2"); CUDA Graph skipped, Nsight Compute measured (kernels are latency-bound, nothing to optimise). Open: the user's live-check table, laptop-to-laptop latency run, optional per-point keypoint masking (needs retraining, only after the live check).
+Phase 10 (scripts, README, docs/DEMO_CHECKLIST.md, docs/RESULTS.md) are done (STATUS "Hardening round 2"); CUDA Graph skipped, Nsight Compute measured (kernels are latency-bound, nothing to optimise). Open: laptop-to-laptop latency run, optional per-point keypoint masking (needs retraining).
+Live check 2026-11-20: hello/how/what/why/where work, YOU never appears. Retraining attempt (STATUS "YOU investigation") did NOT hold on TEST and is NOT deployed. Next: user runs `docs/DIAG_YOU.md` (`start_server.ps1 -Foreground -Diag`, needs `build_cpp.ps1` first) and sends `diag_report.py` output; decide the fix from it.
 ASL, public data only (ASL Citizen in `data/public/`, local-only weights, never commit data). Git history was purged on 2026-11-19 (data/raw + LAPTOP_SETUP.md),
 the token was rotated and the repo is private; the laptop must `git fetch` + `git reset --hard origin/main` (never pull).
 Do not touch the tunnel token/config.

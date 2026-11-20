@@ -4,8 +4,9 @@
 #   powershell -File server\scripts\switch_server.ps1 -To python    Python fallback server (safety net, ~20 s to load)
 #   powershell -File server\scripts\switch_server.ps1 -To stop      stop whatever is running
 #   powershell -File server\scripts\switch_server.ps1 -To status    what is running now
+#   add -Diag to cpp, safe or python to also write logs\diag_<time>.csv (per-frame probabilities, numbers only; see docs/DIAG_YOU.md)
 # Clients reconnect by themselves (the laptop client retries with a back-off of 1-10 s), so a switch costs a few seconds.
-param([Parameter(Mandatory)][ValidateSet("cpp", "safe", "python", "stop", "status")][string]$To)
+param([Parameter(Mandatory)][ValidateSet("cpp", "safe", "python", "stop", "status")][string]$To, [switch]$Diag)
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\common.ps1"
 $s = Get-ServerProcesses
@@ -17,8 +18,8 @@ if ($To -eq "status") {
 }
 Stop-Servers
 switch ($To) {
-    "cpp"    { & "$PSScriptRoot\start_server.ps1" -Mode full }
-    "safe"   { & "$PSScriptRoot\start_server.ps1" -Mode safe }
-    "python" { & "$PSScriptRoot\start_fallback.ps1" }
+    "cpp"    { & "$PSScriptRoot\start_server.ps1" -Mode full -Diag:$Diag }
+    "safe"   { & "$PSScriptRoot\start_server.ps1" -Mode safe -Diag:$Diag }
+    "python" { & "$PSScriptRoot\start_fallback.ps1" -Diag:$Diag }
     "stop"   { Write-Host "no server running" }
 }

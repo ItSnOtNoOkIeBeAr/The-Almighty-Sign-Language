@@ -26,6 +26,12 @@ COMPOUND = 0.35       # share of word windows that start with an earlier sign (s
 NEW_SIGN_NONE = 0.0   # tried 0.15: `none` windows with an earlier sign + the first frames of a new one; it raised false triggers and broke sentence joining (DECISIONS.md)
 NONE_RATIO = 3        # per-epoch `none` windows = at most this x the largest word class
 EVAL_SHIFTS = (-3, 0, 3)
+# Recipe options (CLI flags override; the defaults are the recipe used for the deployed model, see DECISIONS.md "YOU fix").
+# Everything here only changes TRAINING windows; val/test windows are never touched, so runs stay comparable.
+# Groups of OTHER glosses that can be dropped from the `none` pool (training only). "he" = the only deictic point in the pool; "point" = HE plus every
+# OTHER gloss whose active frames show a pointing hand (index long, other fingers curled) in >= 60% of frames, measured by training/list_other_glosses.py.
+POINT_SET = {"none": (), "he": ("HE",), "point": ("HE", "CLEFTCHIN", "LUNCH2", "SNORKEL", "DIFFERENT", "TEAR", "LUCK", "DEAF1", "PLUS")}
+OPT = {"drop_none": (), "you_mult": 1, "you_weight": 1.0, "speed": (0.8, 1.2), "speed_words": "all", "crop_prob": 0.0, "hand_jitter": 0.0}
 
 
 def active_t0(a0, a1, rate, rng, shift=None):
@@ -63,9 +69,24 @@ def sample_epoch(d, rng):
     word = np.where(tr & (d["cls"] > 0))[0]
     active = np.where(tr)[0]  # earlier signs for compound windows: any word or other-gloss clip
     counts = np.zeros(len(D.LABELS), int)
+    base = np.zeros(len(D.LABELS), int)  # windows per class without the YOU oversampling: the `none` share is sized from this
+    you = D.LABELS.index("you")
     for c in word:
-        for _ in range(REPEATS):
-            r = rng.uniform(0.8, 1.2)
+        reps = REPEATS * (OPT["you_mult"] if d["cls"][c] == you else 1)
+        base[d["cls"][c]] += REPEATS
+        for _ in range(reps):
+            wide = OPT["speed_words"] == "all" or d["cls"][c] == you
+            r = rng.uniform(*(OPT["speed"] if wide else (0.8, 1.2)))
+            if wide and rng.random() < OPT["crop_prob"]:
+                # time-crop: the clip is cut inside the sign (>= 60% kept, signs shorter than 6 frames are left whole), the rest is held
+                a0, a1 = d["seg"][c]
+                keep = a1 - a0 + 1
+                if keep >= 6:
+                    cut0, cut1 = int(rng.integers(0, int(0.2 * keep) + 1)), int(rng.integers(0, int(0.2 * keep) + 1))
+                    lo, hi = a0 + cut0, a1 - cut1
+                    add(c, d["cls"][c], active_t0(lo, hi, r, rng), r, lo, hi)
+                    counts[d["cls"][c]] += 1
+                    continue
             if rng.random() < COMPOUND:
                 # earlier sign A ends (gap 1-6 frames) before the target sign starts at window frame k; the label is the later sign
                 k, gap, a = int(rng.integers(8, 19)), int(rng.integers(1, 7)), rng.choice(active)
@@ -74,8 +95,8 @@ def sample_epoch(d, rng):
             else:
                 add(c, d["cls"][c], active_t0(*d["seg"][c], r, rng), r)
             counts[d["cls"][c]] += 1
-    n_none = NONE_RATIO * counts.max()
-    other = np.where(tr & (d["cls"] == 0))[0]
+    n_none = NONE_RATIO * base.max()
+    other = np.where(tr & (d["cls"] == 0) & ~np.isin(d["gloss"], list(OPT["drop_none"])))[0]
     rest = rest_segments(d, "train")
     for i in range(n_none):
         r = rng.uniform(0.8, 1.2)
@@ -148,6 +169,18 @@ def augment(norm, flg, g):
         flg = flg.clone()
         flg[..., h] = flg[..., h] & ~span
         flg[..., 3 + h] = flg[..., 3 + h] & ~span
+    if OPT["hand_jitter"] > 0:  # each hand moves / turns / scales on its own (per window), as another signer's hand would
+        j = OPT["hand_jitter"]
+        for lo_, hi_ in ((S.L0, S.R0), (S.R0, S.N_PTS)):
+            ang = (torch.rand(B, device=dev, generator=g) * 2 - 1) * math.radians(25) * j
+            sc = 1 + (torch.rand(B, device=dev, generator=g) * 2 - 1) * 0.15 * j
+            sh = (torch.rand(B, 1, 2, device=dev, generator=g) * 2 - 1) * 0.12 * j
+            c_, s_ = ang.cos(), ang.sin()
+            rot = torch.stack([torch.stack([c_, -s_], -1), torch.stack([s_, c_], -1)], -2)  # [B,2,2]
+            wrist = norm[:, :, lo_:lo_ + 1]
+            rel = (norm[:, :, lo_:hi_] - wrist) @ rot[:, None].transpose(-1, -2) * sc[:, None, None, None]
+            norm = norm.clone()
+            norm[:, :, lo_:hi_] = wrist + rel + sh[:, None]
     keep = torch.ones(B, T, S.N_PTS, dtype=torch.bool, device=dev)
     keep[:, :, S.L0:S.R0] = flg[..., 0:1]
     keep[:, :, S.R0:] = flg[..., 1:2]
@@ -189,6 +222,7 @@ def train_one(d, bank, seed, epochs, val_plan, dev):
     for ep in range(epochs):
         plan, counts = sample_epoch(d, rng)
         w = torch.tensor(counts.sum() / (len(counts) * np.maximum(counts, 1)), dtype=torch.float32, device=dev)  # inverse-frequency class weights
+        w[D.LABELS.index("you")] *= OPT["you_weight"]
         lossf = nn.CrossEntropyLoss(weight=w, label_smoothing=0.05)
         model.train()
         n, tl, nb = len(plan["clip"]), 0.0, 0
@@ -229,7 +263,17 @@ def main():
     ap.add_argument("--model", required=True, choices=["rtmw_xl_384x288", "rtmw_lm_256x192"])
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--epochs", type=int, default=80)
+    ap.add_argument("--tag", default="", help="write to runs/<model>/<tag>/ (experiments); empty = the deployed location runs/<model>/")
+    ap.add_argument("--drop-none", choices=["none", "he", "point"], default="none", help="gloss groups removed from the none pool in TRAINING only")
+    ap.add_argument("--you-mult", type=int, default=OPT["you_mult"], help="YOU windows per clip per epoch = REPEATS x this")
+    ap.add_argument("--you-weight", type=float, default=OPT["you_weight"], help="extra loss weight of the YOU class")
+    ap.add_argument("--speed", type=float, nargs=2, default=OPT["speed"], metavar=("LO", "HI"), help="playback-rate range of word windows (clip frames per step)")
+    ap.add_argument("--speed-words", choices=["all", "you"], default=OPT["speed_words"], help="which words get the --speed range (others keep 0.8-1.2)")
+    ap.add_argument("--crop-prob", type=float, default=OPT["crop_prob"], help="share of word windows whose sign is time-cropped")
+    ap.add_argument("--hand-jitter", type=float, default=OPT["hand_jitter"], help="strength (0-1) of the independent per-hand shift/rotation/scale")
     a = ap.parse_args()
+    OPT.update(you_mult=a.you_mult, you_weight=a.you_weight, speed=tuple(a.speed), speed_words=a.speed_words, crop_prob=a.crop_prob, hand_jitter=a.hand_jitter,
+               drop_none=POINT_SET[a.drop_none])
     dev = "cuda"
     d = D.load(a.model)
     print(f"{a.model}: {len(d['len'])} clips, {len(d['pts'])} frames; active segment found in {d['seg_found'].mean():.1%} of clips; "
@@ -237,8 +281,9 @@ def main():
     bank = D.Bank(d, dev)
     val_plan, test_plan = eval_set(d, "val"), eval_set(d, "test")
     print(f"val windows {len(val_plan['clip'])} (none {int((val_plan['label'] == 0).sum())}), test windows {len(test_plan['clip'])} (none {int((test_plan['label'] == 0).sum())})", flush=True)
-    out = RUNS / a.model
+    out = RUNS / a.model / a.tag
     out.mkdir(parents=True, exist_ok=True)
+    print("recipe:", json.dumps({**OPT, "drop_none": sorted(OPT["drop_none"])}), flush=True)
     runs = []
     for seed in range(a.seeds):
         t0 = time.time()
@@ -260,7 +305,7 @@ def main():
     print("confusion matrix (rows = true, cols = predicted):\n" + " " * 8 + "".join(f"{n:>7}" for n in names))
     for i, row in enumerate(cm):
         print(f"{names[i]:>8}" + "".join(f"{v:7d}" for v in row))
-    res = {"model": a.model, "params": sum(p.numel() for p in model.parameters()), "val_macro_f1_per_seed": [r["best_val_macro_f1"] for r in runs],
+    res = {"model": a.model, "recipe": {**OPT, "drop_none": sorted(OPT["drop_none"])}, "params": sum(p.numel() for p in model.parameters()), "val_macro_f1_per_seed": [r["best_val_macro_f1"] for r in runs],
            "val_macro_f1_mean": float(np.mean([r["best_val_macro_f1"] for r in runs])), "best_seed": best["seed"],
            "test": {**metrics(pt, y), "report": classification_report(y, pt.argmax(1), labels=list(range(len(names))), target_names=names, output_dict=True, zero_division=0),
                     "confusion": cm.tolist()},

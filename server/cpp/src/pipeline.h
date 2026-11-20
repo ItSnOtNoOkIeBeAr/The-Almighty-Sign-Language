@@ -7,6 +7,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -43,11 +44,14 @@ public:
     const Config& config() const { return cfg_; }
     std::string active_profile() const;
     void set_inject_delay_ms(int ms) { inject_delay_ms_ = ms; }  // failure injection: makes every frame slower by this much
+    // Live diagnostics: one CSV line per frame (class probabilities, top 3, decision state, hand detection). Numbers only, no images.
+    void open_diag(const std::string& path);
 
 private:
     struct Stage;  // engines + buffers of one profile
     Keypoints run_keypoints(Stage& s, const DeviceImage& img, StageMs* ms, cudaEvent_t e_start);
     void degrade(const std::string& reason);  // call with gpu_ held
+    void write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const float* score, const feat::FrameRow& row, const Result& r);
 
     Config cfg_;
     std::mutex gpu_;
@@ -59,4 +63,5 @@ private:
     std::atomic<int> active_{0};
     int slow_frames_ = 0, frames_since_vram_check_ = 0;
     std::atomic<int> inject_delay_ms_{0};
+    std::ofstream diag_;  // written with gpu_ held
 };

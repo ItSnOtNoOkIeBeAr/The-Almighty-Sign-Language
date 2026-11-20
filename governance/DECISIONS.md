@@ -123,3 +123,9 @@ Detectors (a person box was found in 1398 of 1399 frames by both): YOLOX-m ORT 2
 - **Degrade is sticky and per profile.** Switching keypoint model changes the feature statistics, so streams restart (window and decision state) on the new profile and that profile's SignNet is used; an automatic return would flap under load. Triggers: sustained slow frames, low VRAM, or an exception in the primary stage.
 - **Low-confidence keypoints are not masked per point (training and server alike).** Report in STATUS "Step 2"; a fix changes the feature distribution and needs retraining, deferred until the live-check table.
 - **The start/switch scripts read the token from the Windows user variable first** (see STATUS Step 4).
+
+## YOU fix attempt (2026-11-20)
+- **Do not deploy a retrained model that fails the user's own acceptance rule.** The VAL-chosen recipe (time-crop + speed for YOU) lowered TEST macro-F1 and `where` on RTMW-x; results are kept under `training/runs/<model>/you_fix_20261120/`, the deployed checkpoints stay. TEST was used only to report, never to choose; having seen it, a further recipe choice would need new data (or the user's approval) to stay honest.
+- **Dropping pointing glosses from `none` is rejected:** it raised false triggers on VAL (HE only 4.6% -> 12.8%). The pool contains only one deictic sign (HE); the other pointing signs listed by the user are not in the extracted data.
+- **Diagnostic log is numbers only** (class probabilities, decision, hand keypoint counts), written only when `--diag-log` is given, in `logs\` (gitignored). No frames are stored.
+- `train.py` got recipe options (`--drop-none --you-mult --you-weight --speed --speed-words --crop-prob --hand-jitter --tag`); the defaults equal the deployed recipe, so nothing changes unless a flag is passed. `variant_report.py` compares recipes on VAL.

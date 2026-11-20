@@ -46,11 +46,28 @@ class DecodeError(Exception):
     pass
 
 
+class DiagLog:
+    """Live diagnostics (--diag-log): one CSV line per frame, same columns as the C++ server. Numbers only, no images."""
+
+    def __init__(self, path):
+        self.f = open(path, "w", encoding="utf-8", newline="\n")
+        self.f.write("ts_ms,profile," + ",".join("p_" + n for n in LABELS) + ",top1,top2,top3,label,conf,state,committed,"
+                     "hand_L_loose,hand_R_loose,hand_L_strict,hand_R_strict,pts_L,pts_R,thr\n")
+        log.info("diagnostic log (numbers only, no images): %s", path)
+
+    def write(self, ts_ms, profile, probs, score, flags, thr, label, conf, state, committed):
+        top = sorted(range(len(LABELS)), key=lambda i: -probs[i])[:3]
+        n_l, n_r = int((score[91:112] >= thr).sum()), int((score[112:133] >= thr).sum())
+        self.f.write(f"{int(ts_ms)},{profile}," + ",".join(f"{p:.4f}" for p in probs) + "," + ",".join(f"{LABELS[i]}:{probs[i]:.3f}" for i in top)
+                     + f",{label},{conf},{state},{committed or ''},{int(flags[0])},{int(flags[1])},{int(flags[3])},{int(flags[4])},{n_l},{n_r},{thr}\n")
+        self.f.flush()
+
+
 class Engine:
     """Shared ORT sessions. Per-connection state lives in ConnState so clients never mix windows."""
 
-    def __init__(self, profile):
-        self.profile = profile
+    def __init__(self, profile, diag=None):
+        self.profile, self.diag = profile, None  # the diagnostic log starts after the warm-up frames
         m = CFG["models"][profile]
         self.kp = ort_cuda.make_session(str(ROOT / m["keypoint"]))      # raises if CPU-only
         self.temporal = ort_cuda.make_session(str(ROOT / m["temporal"]), tf32=False)  # exact FP32: the logits match PyTorch to 1e-5
@@ -60,6 +77,7 @@ class Engine:
         blank = np.zeros((480, 640, 3), np.uint8)
         for _ in range(2):  # warm-up
             self.process(ConnState(self.decision_cfg), cv2.imencode(".jpg", blank)[1].tobytes(), 0)
+        self.diag = diag
 
     def process(self, st: "ConnState", jpeg: bytes, ts_ms: float, want_kp: bool = False) -> dict:
         t0 = time.perf_counter()
@@ -81,6 +99,8 @@ class Engine:
         probs /= probs.sum()
         t3 = time.perf_counter()
         label, conf, state, committed = st.decision.step(probs.tolist(), bool(flags[3] or flags[4]), st.t_last)  # strict presence drives the idle gate
+        if self.diag:
+            self.diag.write(st.t_last, self.profile, probs.tolist(), score, flags, self.thr, label, conf, state, committed)
         res = {
             "type": "result", "label": label, "confidence": conf, "state": state, "committed_label": committed, "profile": self.profile,
             "server_ms": {"decode": round((t1 - t0) * 1e3, 2), "keypoints": round((t2 - t1) * 1e3, 2),
@@ -226,8 +246,10 @@ def main():
     global engine
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", default=CFG["models"]["default_profile"], choices=[k for k in CFG["models"] if k != "default_profile"])
+    ap.add_argument("--diag-log", default=None, help="write one CSV line per frame (probabilities, decision, hand detection); numbers only")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    profile = ap.parse_args().profile
+    args = ap.parse_args()
+    profile = args.profile
     token = os.environ.get("SIGNLANG_TOKEN")
     if not token:
         sys.exit("SIGNLANG_TOKEN is not set. Set it with setx, then open a NEW terminal.")
@@ -235,7 +257,7 @@ def main():
     # handshake done for denial responses, then skips its 500 because a response was already sent).
     # Verified in uvicorn/protocols/websockets/websockets_sansio_impl.py; drop only that exact message.
     logging.getLogger("uvicorn.error").addFilter(lambda rec: "without completing handshake" not in rec.getMessage())
-    engine = Engine(profile)
+    engine = Engine(profile, DiagLog(args.diag_log) if args.diag_log else None)
     net = CFG["net"]
     log.info("fallback server v%s listening on %s:%d", VERSION, net["host"], net["port"])
     # ws_max_size is far above MAX_BYTES so oversized frames get a too_large reply instead of a closed socket.

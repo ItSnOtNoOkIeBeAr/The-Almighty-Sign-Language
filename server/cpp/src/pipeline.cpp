@@ -169,6 +169,35 @@ Keypoints Pipeline::extract(const unsigned char* jpeg, size_t n, std::vector<flo
     return k;
 }
 
+void Pipeline::open_diag(const std::string& path) {
+    diag_.open(path, std::ios::out | std::ios::trunc);
+    if (!diag_) throw std::runtime_error("cannot open diagnostic log " + path);
+    diag_ << "ts_ms,profile";
+    for (const auto& l : cfg_.labels) diag_ << ",p_" << l;
+    diag_ << ",top1,top2,top3,label,conf,state,committed,hand_L_loose,hand_R_loose,hand_L_strict,hand_R_strict,pts_L,pts_R,thr\n";
+    spdlog::info("diagnostic log (numbers only, no images): {}", path);
+}
+
+// One CSV line per frame. pts_L / pts_R = how many of the 21 hand points score above the loose threshold (a hand needs >= 15 to count).
+void Pipeline::write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const float* score, const feat::FrameRow& row, const Result& r) {
+    std::vector<size_t> order(probs.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return probs[a] > probs[b]; });
+    int n_l = 0, n_r = 0;
+    for (int i = 91; i < 112; ++i) n_l += score[i] >= s.cfg.keypoint_thr;
+    for (int i = 112; i < 133; ++i) n_r += score[i] >= s.cfg.keypoint_thr;
+    char buf[64];
+    diag_ << (long long)ts_ms << ',' << s.cfg.name;
+    for (double p : probs) diag_ << ',' << (std::snprintf(buf, sizeof buf, "%.4f", p), buf);
+    for (size_t k = 0; k < 3 && k < order.size(); ++k) {
+        std::snprintf(buf, sizeof buf, "%s:%.3f", cfg_.labels[order[k]].c_str(), probs[order[k]]);
+        diag_ << ',' << buf;
+    }
+    diag_ << ',' << r.label << ',' << r.confidence << ',' << r.state << ',' << (r.committed ? *r.committed : "") << ',' << row.flags[0] << ',' << row.flags[1]
+          << ',' << row.flags[3] << ',' << row.flags[4] << ',' << n_l << ',' << n_r << ',' << s.cfg.keypoint_thr << '\n';
+    diag_.flush();
+}
+
 Result Pipeline::process(StreamState& st, const unsigned char* jpeg, size_t n, double ts_ms, bool want_keypoints) {
     std::lock_guard<std::mutex> lk(gpu_);
     const auto t0 = std::chrono::steady_clock::now();
@@ -212,6 +241,7 @@ Result Pipeline::process(StreamState& st, const unsigned char* jpeg, size_t n, d
 
         const DecisionOut d = st.decision.step(probs, row.flags[3] || row.flags[4], st.t_last());  // strict presence drives the idle gate
         r.label = d.label, r.confidence = d.confidence, r.state = d.state, r.committed = d.committed;
+        if (diag_.is_open()) write_diag(ts_ms, s, probs, score, row, r);
     } catch (const DecodeError&) {
         throw;  // a bad frame says nothing about the health of the GPU stage
     } catch (const std::exception& e) {
