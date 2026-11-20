@@ -1,6 +1,6 @@
 """Laptop client: webcam -> JPEG -> WebSocket -> label overlay. CPU only (opencv, websockets, numpy).
 
-  python client/client.py [--url wss://<host>/ws]       live view (q or Esc quits, k = keypoints, d = details); token from SIGNLANG_TOKEN
+  python client/client.py [--url wss://<host>/ws]       live view (q or Esc quits, k = toggle skeleton (on by default), d = details); token from SIGNLANG_TOKEN
   python client/client.py --headless --duration 10      no window, prints results + latency summary
   python client/client.py --record hello --signer s1    record a 3 s clip (see recorder.py)
   python client/client.py --review [--label hello]      replay / delete recorded clips
@@ -127,6 +127,7 @@ class Link:
 
 def run_live(cfg, token, headless, duration):
     link, cap = Link(cfg, token), open_camera(cfg)
+    link.want_kp = not headless  # live view shows the skeleton from the first frame (k toggles); headless stays lean
     link.start()
     t_start, last_n, shown, disp_fps, t_prev = time.time(), 0, 0, 0.0, time.time()
     details = False
