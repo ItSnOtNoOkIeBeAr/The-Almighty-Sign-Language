@@ -11,8 +11,9 @@ from common import put_text
 BANNER_SECONDS = 5.0   # the banner stays this long after the newest word; a new word restarts the timer
 MAX_BANNER_WORDS = 6   # older words scroll off so the line stays readable
 SENTENCE_TEXT = {"how_are_you": "HOW ARE YOU?", "where_are_you": "WHERE ARE YOU?"}
-# COCO-WholeBody indices the server sends: body 0-12 and both hands 91-132. Only the arms are drawn:
-# shoulders 5/6, elbows 7/8, wrists 9/10 (no face points 0-4, no hips 11/12).
+# COCO-WholeBody indices the server sends: body 0-12 and both hands 91-132. Drawn: face dots, plus the arms:
+# shoulders 5/6, elbows 7/8, wrists 9/10 (no hips 11/12).
+FACE_IDS = [0, 1, 2, 3, 4]   # nose, eyes, ears: the only face points the server sends (no mouth/brows/contour)
 ARM_IDS = [5, 6, 7, 8, 9, 10]
 ARM_SIDES = [(5, 7, 9), (6, 8, 10)]  # (shoulder, elbow, wrist) per side; each side is drawn whole or not at all
 BODY_BONES = [(0, 1), (0, 2), (2, 4), (1, 3), (3, 5)]  # positions in ARM_IDS (like HAND_BONES: positions in a hand's 21 ids)
@@ -116,6 +117,7 @@ def draw_keypoints(img, kp, smoother=None):
             if i in pts:
                 cv2.circle(img, pts[i], r + 2 if n in tips else r, TIP_RED if n in tips else WHITE, -1, cv2.LINE_AA)
 
+    bones(FACE_IDS, [], 3)
     bones(ARM_IDS, BODY_BONES, 4)
     bones(list(range(91, 112)), HAND_BONES, 2, FINGERTIPS)
     bones(list(range(112, 133)), HAND_BONES, 2, FINGERTIPS)
