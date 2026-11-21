@@ -52,7 +52,8 @@
     "release_none_frames": 8,
     "repeat_rest_frames": 3,
     "repeat_rest_p": 0.2,
-    "repeat_cooldown_ms": 2000
+    "repeat_cooldown_ms": 2000,
+    "thr_why": 0.7
   },
   "degrade": {
     "enabled": true,

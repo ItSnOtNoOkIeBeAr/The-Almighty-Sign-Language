@@ -52,7 +52,7 @@ def main():
     sel = json.loads((T.RUNS / a.model / "selected.json").read_text())
     srv_cfg = json.loads((ROOT / "server" / "config" / "server.json").read_text())
     # the settings the server really uses: those selected on val plus the same-word guard settings from server.json
-    cfg = {**sel["decision"], **{k: v for k, v in srv_cfg["decision"].items() if k.startswith("repeat_")}}
+    cfg = {**sel["decision"], **{k: v for k, v in srv_cfg["decision"].items() if k.startswith(("repeat_", "thr_"))}}
     print("replay decision settings:", {k: cfg.get(k) for k in ("commit_threshold", "commit_consecutive_M", "ema_alpha", "repeat_rest_frames", "repeat_rest_p", "repeat_cooldown_ms")})
     d = D.load(a.model)
     net = SignNet(n_cls=len(D.LABELS)).cuda().eval()

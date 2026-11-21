@@ -16,6 +16,10 @@ bool starts_join(const std::string& w) { return w == "how" || w == "where" || w 
 
 Decision::Decision(std::vector<std::string> labels, DecisionCfg cfg) : labels_(std::move(labels)), cfg_(cfg) {
     none_ = index_of("none");
+    for (const auto& l : labels_) {
+        auto it = cfg_.word_threshold.find(l);
+        thr_.push_back(it == cfg_.word_threshold.end() ? cfg_.commit_threshold : it->second);
+    }
     reset();
 }
 
@@ -65,7 +69,7 @@ DecisionOut Decision::step(const std::vector<double>& probs, bool hands_present,
         away_ = (k == fired_) ? 0 : away_ + 1;
         if (away_ >= (k == none_ ? cfg_.release_none_frames : cfg_.release_frames)) fired_ = -1;
     }
-    if (k != none_ && conf >= cfg_.commit_threshold) {
+    if (k != none_ && conf >= thr_[k]) {
         consec_ = (k == cand_) ? consec_ + 1 : 1;
         cand_ = k;
     } else {

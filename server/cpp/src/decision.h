@@ -2,6 +2,7 @@
 // idle gate -> EMA -> candidate -> commit after M agreeing frames -> fired/release -> same-word guard -> word joining.
 #pragma once
 #include <deque>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -16,6 +17,8 @@ struct DecisionCfg {
     // for repeat_rest_frames frames in a row, or has not seen it (probability < commit_threshold) for repeat_cooldown_ms.
     int repeat_rest_frames = 0;
     double repeat_rest_p = 0.2, repeat_cooldown_ms = 2000;
+    // Per-word commit threshold (server.json "thr_<word>"); a word not listed here uses commit_threshold.
+    std::map<std::string, double> word_threshold;
 };
 
 struct DecisionOut {
@@ -40,6 +43,7 @@ private:
     std::vector<std::string> labels_;
     DecisionCfg cfg_;
     int none_ = 0;
+    std::vector<double> thr_;                // commit threshold per label
     std::deque<bool> hands_;
     std::vector<double> ema_;                // empty = no EMA yet
     int cand_ = -1, consec_ = 0, fired_ = -1, away_ = 0;

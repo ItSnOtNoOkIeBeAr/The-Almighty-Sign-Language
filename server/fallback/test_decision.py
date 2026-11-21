@@ -236,5 +236,34 @@ class SameWordGuardTests(unittest.TestCase):
         self.assertEqual(r.committed(), ["hello", "hello"])
 
 
+class PerWordThresholdTests(unittest.TestCase):
+    """thr_<word> sets the commit threshold of one word; the others keep commit_threshold."""
+
+    def test_deployed_settings_raise_the_why_threshold(self):
+        self.assertGreater(CFG["thr_why"], CFG["commit_threshold"])
+
+    def test_a_word_below_its_own_threshold_does_not_commit_but_the_others_do(self):
+        conf = (CFG["commit_threshold"] + CFG["thr_why"]) / 2  # above the common threshold, below why's
+        self.assertEqual(Run().feed("why", 12, conf=conf).feed("none", 30, hands=False).committed(), [])
+        for w in ("hello", "what"):
+            self.assertEqual(Run().feed(w, 12, conf=conf).feed("none", 30, hands=False).committed(), [w], w)
+
+    def test_a_word_above_its_own_threshold_commits(self):
+        r = Run().feed("why", 12, conf=CFG["thr_why"] + 0.05).feed("none", 30, hands=False)
+        self.assertEqual(r.committed(), ["why"])
+
+    def test_without_a_per_word_threshold_every_word_uses_the_common_one(self):
+        cfg = {k: v for k, v in CFG.items() if not k.startswith("thr_")}
+        conf = CFG["commit_threshold"] + 0.05
+        for w in ("hello", "what", "why"):
+            self.assertEqual(Run(cfg).feed(w, 12, conf=conf).feed("none", 30, hands=False).committed(), [w], w)
+
+    def test_a_raised_threshold_on_a_joining_word_only_affects_that_word(self):
+        cfg = {**CFG, "thr_you": 0.9}
+        conf = 0.8
+        self.assertEqual(Run(cfg).feed("how", 8, conf=conf).feed("none", 40, hands=False).committed(), ["how"])
+        self.assertEqual(Run(cfg).feed("you", 8, conf=conf).feed("none", 40, hands=False).committed(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

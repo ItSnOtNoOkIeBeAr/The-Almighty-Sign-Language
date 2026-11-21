@@ -154,3 +154,8 @@ Detectors (a person box was found in 1398 of 1399 frames by both): YOLOX-m ORT 2
 ## Pillow for the client font (2026-11-21)
 - **Pillow added to the client (user's choice) with a system font, not a bundled one:** OpenCV only has basic fonts and its freetype module is not in opencv-python. A Windows system font means no font file or licence in the repo; if Pillow or the font is missing the client falls back to OpenCV text, so the live demo cannot break because of it.
 - **Text is rendered into small cached masks and blended into the frame** (not a full-frame numpy<->PIL conversion per text), to keep the per-frame cost a few milliseconds.
+
+## False triggers: per-word threshold only (2026-11-21)
+Live false commits (typing, resting, waving in view) are high-confidence, 2-6 s, still-hand predictions, so global threshold, margin, minimum duration, onset-rest, two-handed
+rules and gate hysteresis were tested and rejected: they cost words or sentences for little or no live gain (table in STATUS). Adopted: a per-word threshold, `thr_why` 0.7 (free on VAL and TEST,
+both keypoint models). Seed ensemble rejected for now (sentences -4 on TEST). The temporary guard knobs were removed from decision.py so Python and C++ stay a line-by-line pair.

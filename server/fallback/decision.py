@@ -5,6 +5,7 @@ reference for the C++ port.  Per frame, in order:
   1. idle gate (rule based): the hands must be seen in >= gate_min of the last gate_frames frames, else nothing can happen;
   2. EMA smoothing of the probabilities (reset whenever the gate closes);
   3. candidate = best non-`none` class with smoothed confidence >= commit_threshold;
+  3b. the threshold can be set per word (`thr_<word>`, e.g. thr_why 0.7); a word without one uses commit_threshold;
   4. commit after M consecutive frames with the same candidate, if it is not still "fired" and the cooldown has passed.
      A committed label stays fired until another word has been predicted for release_frames frames, `none` for
      release_none_frames frames (a sign flickers to `none` mid-way), or the gate closes, so one sign never fires twice;
@@ -64,13 +65,14 @@ class Decision:
         self.ema = list(probs) if self.ema is None else [a * p + (1 - a) * e for p, e in zip(probs, self.ema)]
         k = max(range(len(self.ema)), key=self.ema.__getitem__)
         conf = self.ema[k]
+        word = self.labels[k]
         if self.pending and self.labels[k] == self.pending[0]:
             self.pending = (self.pending[0], t_ms)  # the held word's sign is still going on
         if self.fired is not None:
             self.away = 0 if k == self.fired else self.away + 1
             if self.away >= (c["release_none_frames"] if k == self.none else c["release_frames"]):
                 self.fired = None
-        if k != self.none and conf >= c["commit_threshold"]:
+        if k != self.none and conf >= c.get("thr_" + word, c["commit_threshold"]):  # per-word threshold (thr_<word>), else the common one
             self.consec = self.consec + 1 if k == self.cand else 1
             self.cand = k
         else:

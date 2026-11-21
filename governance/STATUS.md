@@ -323,3 +323,36 @@ Request: a proper font for the on-screen text and a better design. Client only.
 - **Design:** rounded translucent panels everywhere (`textfx.rounded_box`): status chip with a coloured dot, prediction card with a rounded confidence bar (green >= 50%, orange below), bottom key-hint and latency pills, rounded menu buttons (pinned word outlined, recognised word green), and a rounded word banner with a bar that shrinks over the 5 s it stays (shows when the line resets).
 - **Cost:** `draw_overlay` ~6.6 ms per 640x480 frame on this PC (was not measured before); the laptop CPU is unmeasured.
 - **Verification:** 28 UI tests (new: text drawn only inside its measured box, clipping past the image edges, OpenCV fallback, box blending/rounding/border); screens rendered and looked at. NOT done: seen on the live webcam, laptop speed.
+
+## False triggers: live no-sign log analysed, per-word threshold (2026-11-21)
+1. **Live log** `logs/diag_20261121_044956.csv` (local only). It holds several runs; I took the first stream (355 s) and assumed the first 180 s
+   (ticks 0-1800) are the "not signing" phase (a calm gap at 170-190 s fits). If that boundary is wrong, say so: `--no-sign-ticks` moves it.
+   With the deployed settings 15 commits happen in that phase (you 3, what 2, hello 3, why 1, where 4, where_are_you 2).
+2. **Pattern** (`training/false_commit_table.py`): the false commits are NOT weak. Typical: peak p 0.92-0.98, 24-60 frames above the threshold
+   (2.4-6 s), top1-top2 margin 0.4-0.95, strict-hand point count constant (42 = both hands fully visible and unchanging, std 0.0), 9-28 rest frames
+   in the 30 before. So: a hand held still in view for seconds (typing, resting, waving at the screen) that the model calls WHAT/HELLO/WHERE
+   with high confidence. 7 of the 15 are held words (you 3, where 4) emitted 1.5 s late: 4 of them rest on only 1-3 raw frames above the threshold (the smoothing carried them), 3 are long holds.
+3. **Guards tested** (`training/guard_experiments.py`; deployed settings as base; VAL / TEST / live no-sign false commits; the knobs were temporary and are NOT in the code):
+
+   | change | VAL words, FT/400, sentences | TEST words, FT/400, sentences | live false |
+   |---|---|---|---|
+   | deployed (guard on, thr 0.5) | 24/29, 27, 4/11 | 78/103, 15, 13/33 | 15 |
+   | **thr_why 0.7 (adopted)** | 24/29, **23**, 4/11 | 78/103, **13**, 13/33 | 15 |
+   | thr_hello/what/why 0.7 | 24/29, 21, 4/11 | 78/103, 12, 13/33 | 14 (loses a live hello and a what) |
+   | global threshold 0.7 | 23/29, 17, 2/11 | 74/103, 11, 7/33 | 14 |
+   | thr_where / thr_you 0.7 | sentences drop (3/11, 8/33) | | 15 |
+   | min margin 0.2 / 0.35 / 0.5 | FT 26 / 24 / 16, words -1, sentences 2/11 | words 78 / 77 / 73, sentences 12 / 11 / 7 | 15 / 15 / 14 |
+   | M 5 / 6 | FT 24 / 21 | words 75 / 70, sentences 12 / 11 | 12 / 12 |
+   | onset (rest before the sign, 3-8 frames) | 21-22/29, FT 27, 4/11 | 76/103, 14, 13/33 | 14-15 |
+   | two-handed WHAT/HOW | words -2..-3 | words -8..-12 | 15 |
+   | gate hysteresis 3 / 5 / 8 | words +1, FT same / same / +1 | words +3 / +4 / +4, FT 15 / 18 / 18, sentences +2..+5 | 16 / 18 / 18 |
+   Per-class M / thresholds on where/you only trade sentences for fewer FTs. Nothing reduces the live false commits: they are confident, long, still-hand
+   predictions. Margin, onset, M and the two-handed rule cost words or sentences for little gain; gate hysteresis raises recall (not asked for) but adds false triggers.
+4. **Adopted:** `thr_why` 0.7 in `server/config/server.json` (per-word threshold `thr_<word>`, implemented in decision.py and decision.cpp, 5 + 5 new tests, golden regenerated).
+   Primary: FT VAL 27 -> 23, TEST 15 -> 13, words and sentences identical, live log identical. Fallback model (rtmw_lm_256x192): FT VAL 27 -> 23, TEST 26 -> 24, words and sentences identical.
+5. **Ensemble (not adopted, not deployed):** probability average of the deployed checkpoint + the 4 retrained seeds (`runs/rtmw_xl_384x288/base/seed0-3`; the older 8 seeds
+   no longer exist, only 4 + the deployed one): FT VAL 27 -> 8, TEST 15 -> 7, words 24/29 and 78/103 unchanged, but sentences TEST 13 -> 9 (of 33; some gained, some lost) at the same
+   settings (VAL 4/11 -> 4/11). That is more than the ~1 clip allowed, and its effect on the live log cannot be replayed (the log has probabilities, not keypoints). Left to the user to decide.
+6. **Verification:** C++ 66 CPU tests pass (dev build), Python 49 (decision 40 + ticks 9), conformance 9/9 and server vs offline replay 48/48 on both the C++ (8766) and Python (8767) dev servers. Release build and live server NOT rebuilt.
+7. **Next:** the live false commits need a feature the decision does not have (hand motion: a held still hand versus a sign) or training on the user's own idle hands (user-only action). `-Diag` would need
+   a motion column to tune it; not built yet.

@@ -308,6 +308,49 @@ TEST(SameWordGuard, ResetClearsTheGuard) {
     EXPECT_EQ(r.committed(), (V{"hello", "hello"}));
 }
 
+TEST(PerWordThreshold, DeployedSettingsRaiseWhy) {
+    ASSERT_TRUE(CFG().word_threshold.count("why"));
+    EXPECT_GT(CFG().word_threshold.at("why"), CFG().commit_threshold);
+}
+
+TEST(PerWordThreshold, ABelowItsOwnThresholdWordDoesNotCommitButTheOthersDo) {
+    const double conf = (CFG().commit_threshold + CFG().word_threshold.at("why")) / 2;  // above the common threshold, below why's
+    Seq a;
+    a.feed("why", 12, true, conf).feed("none", 30, false);
+    EXPECT_TRUE(a.committed().empty());
+    for (const char* w : {"hello", "what"}) {
+        Seq b;
+        b.feed(w, 12, true, conf).feed("none", 30, false);
+        EXPECT_EQ(b.committed(), V{w}) << w;
+    }
+}
+
+TEST(PerWordThreshold, AWordAboveItsOwnThresholdCommits) {
+    Seq r;
+    r.feed("why", 12, true, CFG().word_threshold.at("why") + 0.05).feed("none", 30, false);
+    EXPECT_EQ(r.committed(), V{"why"});
+}
+
+TEST(PerWordThreshold, WithoutOneEveryWordUsesTheCommonThreshold) {
+    DecisionCfg c = CFG();
+    c.word_threshold.clear();
+    for (const char* w : {"hello", "what", "why"}) {
+        Seq r(c);
+        r.feed(w, 12, true, c.commit_threshold + 0.05).feed("none", 30, false);
+        EXPECT_EQ(r.committed(), V{w}) << w;
+    }
+}
+
+TEST(PerWordThreshold, ARaisedThresholdOnAJoiningWordOnlyAffectsThatWord) {
+    DecisionCfg c = CFG();
+    c.word_threshold["you"] = 0.9;
+    Seq a(c), b(c);
+    a.feed("how", 8, true, 0.8).feed("none", 40, false);
+    b.feed("you", 8, true, 0.8).feed("none", 40, false);
+    EXPECT_EQ(a.committed(), V{"how"});
+    EXPECT_TRUE(b.committed().empty());
+}
+
 // The same long synthetic streams (words, wobble, hands flickering out of view, rests) through decision.py and decision.cpp:
 // every frame must give the same label, state and committed event.
 TEST(DecisionGolden, MatchesPythonFrameByFrame) {
