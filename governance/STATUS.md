@@ -356,3 +356,28 @@ Request: a proper font for the on-screen text and a better design. Client only.
 6. **Verification:** C++ 66 CPU tests pass (dev build), Python 49 (decision 40 + ticks 9), conformance 9/9 and server vs offline replay 48/48 on both the C++ (8766) and Python (8767) dev servers. Release build and live server NOT rebuilt.
 7. **Next:** the live false commits need a feature the decision does not have (hand motion: a held still hand versus a sign) or training on the user's own idle hands (user-only action). `-Diag` would need
    a motion column to tune it; not built yet.
+
+## Motion gate + motion columns in -Diag (2026-11-21)
+1. **Hand motion** (`signfeat.hand_motion`, C++ `feat::hand_motion`): per decision tick, per hand, the wrist's and the mean fingertip's displacement since the previous tick in shoulder widths
+   (hand must be present in both frames); `mot` = larger of the two hands' (wrist + tips)/2. The Decision keeps the last 30 values (`mot_1s` = mean of the last 10, `mot_3s` = mean of 30).
+2. **-Diag columns** (both servers): `mot_L_wrist,mot_L_tips,mot_R_wrist,mot_R_tips,mot,mot_1s,mot_3s`. Verified: the C++ (TensorRT) and Python (ORT) servers log the same motion distribution on the same 48 clips
+   (mean 0.0654 vs 0.0659, p90 0.2205 vs 0.2204), and the function itself matches Python in a golden test (5 values x 29 frame pairs x 3 windows).
+3. **Gate** (`motion_min` > 0, `motion_window` ticks; both in `decision`): a word may commit only if the summed motion of the last `motion_window` ticks reaches `motion_min`. It sits in front of the commit
+   decision, so every word of a sentence (incl. the held how/where/you) must pass by itself: a still hand cannot create "Where are you?" (unit tests, Python + C++). **Shipped OFF** (key absent = 0): the live
+   threshold needs the user's new log.
+4. **Dataset sweep** (primary model; `training/guard_experiments.py`, base = deployed incl. thr_why 0.7; VAL words / FT of 400 / sentences, TEST words / FT / sentences):
+   | gate | VAL | TEST |
+   |---|---|---|
+   | off | 24/29, 23, 4/11 | 78/103, 13, 13/33 |
+   | W20, min 0.7 | 24/29, 23, 4/11 | 78/103, 13, 13/33 |
+   | W20, min 1.0 | 23/29, 23, 4/11 | 77/103, 13, 12/33 |
+   | W20, min 1.3 | 23/29, 22, 4/11 | 77/103, 13, 12/33 |
+   | W20, min 1.6 | 22/29, 22, 3/11 | 76/103, 13, 12/33 |
+   | W20, min 2.0 | 21/29, 20, 2/11 | 73/103, 13, 9/33 |
+   | W10, min 0.7 | 24/29, 23, 4/11 | 78/103, 13, 12/33 |
+   | W10, min 1.0 | 22/29, 20, 2/11 | 77/103, 13, 11/33 |
+   Word clips have a best 10-tick motion sum of 0.7 (min) / 1.3 (5th percentile) / 2.3 (median) shoulder widths, so a gate up to about W20/1.3 costs at most 1 word and 1 sentence on the dataset (the allowed budget).
+   OTHER-gloss clips are real signs and also move, so the gate cannot lower dataset false triggers; its target is the live still-hand commits. Dataset can only give the UPPER bound for the threshold; the lower bound comes from the live log.
+5. **Phase marking from the signer's own markers:** `client/mark.py <no_sign|gap|words|end>` writes epoch-ms markers, `server/scripts/mark_phases.py` turns them + a diag log into `*.phases.json` and a per-phase summary (checks the calm gap is calm; `--at name=HH:MM:SS` instead of markers). Procedure: `docs/DIAG_MOTION.md`.
+6. **Verification:** C++ 75 CPU tests (incl. golden: hand_motion, motion-gated decision streams with rolling scores) + 6 GPU pass on a dev build; Python 58 (decision 49 incl. 10 motion-gate tests, ticks 9); conformance 9/9 and server vs offline replay 48/48 on both dev servers. Release build and live server NOT rebuilt.
+7. **Open:** the user's new live log -> choose motion_min / motion_window on VAL + live (accept only if live false commits drop clearly and words/sentences drop by <= ~1 clip), set in server.json, re-run everything. The ensemble numbers above came from an earlier version of guard_experiments.py (the --ensemble option was removed with the rewrite).

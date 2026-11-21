@@ -56,7 +56,7 @@ Every number below comes with its command in [docs/RESULTS.md](docs/RESULTS.md) 
 |---|---|
 | ⏱️ **Server time per frame** | about **5 ms** median (C++/TensorRT FP16); the Python fallback needs about 22 ms |
 | 🛡️ **Soak test through the tunnel** | 4,521 of 4,521 frames answered in 10 minutes, no errors, no reconnects, no memory growth |
-| 🧪 **Tests** | C++ 66 CPU + 6 GPU, Python 49 (decision + recognition clock), protocol conformance 9/9 on both servers, AddressSanitizer clean |
+| 🧪 **Tests** | C++ 75 CPU + 6 GPU, Python 58 (decision + recognition clock), protocol conformance 9/9 on both servers, AddressSanitizer clean |
 | 🎯 **Accuracy on 11 unseen signers** | 84.8% of windows correct (macro-F1 0.83) with the primary keypoint model; the per-word table and the weak spots (`where`, `you`, sentences) are listed honestly in RESULTS |
 
 ## 📚 Documents

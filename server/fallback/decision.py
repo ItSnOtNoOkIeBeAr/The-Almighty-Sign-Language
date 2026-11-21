@@ -6,6 +6,9 @@ reference for the C++ port.  Per frame, in order:
   2. EMA smoothing of the probabilities (reset whenever the gate closes);
   3. candidate = best non-`none` class with smoothed confidence >= commit_threshold;
   3b. the threshold can be set per word (`thr_<word>`, e.g. thr_why 0.7); a word without one uses commit_threshold;
+  3c. motion gate (motion_min > 0): a word may commit only if the hands moved during the sign: the summed hand motion (shoulder widths per tick,
+      see signfeat.hand_motion) over the last motion_window ticks must reach motion_min. A hand held still in view (typing, resting) never commits, nor
+      does it complete a sentence: every word of a sentence passes the gate by itself. motion is optional per step; without it the gate sees zeros.
   4. commit after M consecutive frames with the same candidate, if it is not still "fired" and the cooldown has passed.
      A committed label stays fired until another word has been predicted for release_frames frames, `none` for
      release_none_frames frames (a sign flickers to `none` mid-way), or the gate closes, so one sign never fires twice;
@@ -41,10 +44,22 @@ class Decision:
         self.guard = None  # (class index, ms the model last predicted it) of the last committed word, while it may not commit again
         self.rest_run = 0  # consecutive frames in which the guarded word's raw probability is low (the sign has ended)
         self.outbox = deque()  # events not yet reported: the protocol allows one event per frame
+        self.mot = deque(maxlen=30)  # hand motion per tick, newest last (3 s)
 
-    def step(self, probs, hands_present, t_ms):
-        """probs: one probability per label. Returns (label, confidence, state, committed_label)."""
+    @property
+    def mot_1s(self):
+        """Mean hand motion over the last 10 ticks (1 s); diagnostics."""
+        return sum(list(self.mot)[-10:]) / 10.0
+
+    @property
+    def mot_3s(self):
+        """Mean hand motion over the last 30 ticks (3 s); diagnostics."""
+        return sum(self.mot) / 30.0
+
+    def step(self, probs, hands_present, t_ms, motion=0.0):
+        """probs: one probability per label; motion: hand motion since the previous tick (signfeat.hand_motion). Returns (label, confidence, state, committed_label)."""
         c = self.cfg
+        self.mot.append(float(motion))
         emitted = []
         if self.pending and t_ms - self.pending[1] > c["join_ms"]:
             emitted.append(self.pending[0])
@@ -78,7 +93,8 @@ class Decision:
         else:
             self.cand, self.consec = None, 0
         repeat = self.guard is not None and self.cand == self.guard[0]  # the same word again, without the sign having ended in between
-        if (self.cand is not None and self.consec >= c["commit_consecutive_M"] and self.cand != self.fired
+        moved = c.get("motion_min", 0) <= 0 or sum(list(self.mot)[-c.get("motion_window", 10):]) >= c["motion_min"]  # the hands moved during the sign
+        if (self.cand is not None and moved and self.consec >= c["commit_consecutive_M"] and self.cand != self.fired
                 and t_ms - self.last_commit >= c["cooldown_ms"] and not repeat):
             emitted += self._commit(self.labels[self.cand], t_ms)
             self.fired, self.away, self.last_commit, self.consec = self.cand, 0, t_ms, 0

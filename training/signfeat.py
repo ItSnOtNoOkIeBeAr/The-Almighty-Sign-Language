@@ -45,6 +45,31 @@ def frame_row(kpt, score, thr, present_thr, size=(640, 480)):
     return k[SEL], np.array(flags, bool)
 
 
+TIPS = (4, 8, 12, 16, 20)  # fingertip offsets inside one hand's 21 points (0 = wrist)
+
+
+def hand_motion(prev_pts, pts, prev_flags, flags):
+    """Hand movement between two consecutive decision ticks, in shoulder widths (numpy; pts [57,2] raw pixels, flags [5] bool).
+    Returns (wrist_L, tips_L, wrist_R, tips_R, motion): the wrist's and the mean fingertip's displacement per hand (0 when the hand
+    is not present in BOTH frames, loose flag) and motion = the larger of the two hands' (wrist + tips) / 2. Shoulder width is the current
+    frame's (the default scale when the shoulders are unreliable). The motion gate of the decision logic and the diagnostic log use it;
+    server/cpp/src/features.cpp hand_motion() is the port."""
+    import numpy as np
+    w = float(np.linalg.norm(pts[0] - pts[1])) if flags[2] else 0.0
+    if w < 20:
+        w = DEFAULT_SCALE
+    out, m = [], 0.0
+    for h, base in ((0, L0), (1, R0)):
+        if prev_flags[h] and flags[h]:
+            d = np.linalg.norm(pts[base:base + 21] - prev_pts[base:base + 21], axis=1) / w
+            wr, tip = float(d[0]), float(np.mean(d[list(TIPS)]))
+        else:
+            wr = tip = 0.0
+        out += [wr, tip]
+        m = max(m, 0.5 * (wr + tip))
+    return (*out, m)
+
+
 def normalize_window(pts, flags):
     """pts [B,T,57,2] raw pixels, flags [B,T,3] bool -> normalised pts [B,T,57,2] (hands zeroed when absent)."""
     ok = flags[..., 2]

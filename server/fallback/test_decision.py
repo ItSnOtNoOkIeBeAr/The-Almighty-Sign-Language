@@ -26,9 +26,9 @@ class Run:
     def __init__(self, cfg=None):
         self.d, self.t, self.events, self.frames = Decision(LABELS, cfg or CFG), 0, [], []
 
-    def feed(self, label, n, hands=True, conf=0.95):
+    def feed(self, label, n, hands=True, conf=0.95, motion=0.0):
         for _ in range(n):
-            out = self.d.step(p(label, conf), hands, self.t)
+            out = self.d.step(p(label, conf), hands, self.t, motion)
             self.frames.append(out)
             if out[3]:
                 self.events.append((self.t, out[3]))
@@ -263,6 +263,64 @@ class PerWordThresholdTests(unittest.TestCase):
         conf = 0.8
         self.assertEqual(Run(cfg).feed("how", 8, conf=conf).feed("none", 40, hands=False).committed(), ["how"])
         self.assertEqual(Run(cfg).feed("you", 8, conf=conf).feed("none", 40, hands=False).committed(), [])
+
+
+GATE = {**CFG, "motion_min": 1.0, "motion_window": 10}  # 10 ticks x 0.2 = 2.0 for a moving hand, 0 for a held one
+SHORT = {**CFG, "motion_min": 0.5, "motion_window": 4}
+MOVING, STILL = 0.2, 0.0
+
+
+class MotionGateTests(unittest.TestCase):
+    """A word may commit only if the hands moved: the summed motion over the last motion_window ticks must reach motion_min."""
+
+    def test_with_motion_min_zero_a_still_hand_commits(self):
+        cfg = {**CFG, "motion_min": 0}
+        for w in ("hello", "what", "why"):
+            self.assertEqual(Run(cfg).feed(w, 10, motion=STILL).feed("none", 30, hands=False).committed(), [w], w)
+
+    def test_a_held_still_hand_never_commits_for_every_word(self):
+        for w in WORDS:
+            with self.subTest(word=w):
+                self.assertEqual(Run(GATE).feed(w, 60, motion=STILL).feed("none", 40, hands=False).committed(), [])
+
+    def test_a_moving_hand_commits_for_every_word(self):
+        for w in WORDS:
+            with self.subTest(word=w):
+                self.assertEqual(Run(GATE).feed(w, 12, motion=MOVING).feed("none", 40, hands=False).committed(), [w])
+
+    def test_a_word_held_still_commits_as_soon_as_the_hand_moves(self):
+        r = Run(GATE).feed("hello", 10, motion=STILL).feed("hello", 10, motion=MOVING).feed("none", 40, hands=False)
+        self.assertEqual(r.committed(), ["hello"])
+
+    def test_motion_older_than_the_window_does_not_count(self):
+        cfg = {**GATE, "motion_window": 2}
+        r = Run(cfg).feed("hello", 1, motion=1.0).feed("hello", 12, motion=STILL).feed("none", 40, hands=False)
+        self.assertEqual(r.committed(), [])
+
+    def test_a_still_hand_cannot_complete_a_sentence(self):
+        # the first word moves, the partner is held still: the first word goes out alone, never the sentence
+        for first, partner in (("how", "you"), ("where", "you"), ("you", "where")):
+            with self.subTest(first=first, partner=partner):
+                # a short window and a short rest between the signs, so the first sign's motion has left the window when the partner is judged
+                r = Run(SHORT).feed(first, 8, motion=MOVING).feed("none", 4, motion=STILL).feed(partner, 12, motion=STILL).feed("none", 40, hands=False)
+                self.assertEqual(r.committed(), [first])
+
+    def test_two_moving_signs_still_make_the_sentences(self):
+        for a, b, s in (("how", "you", "how_are_you"), ("where", "you", "where_are_you"), ("you", "where", "where_are_you")):
+            with self.subTest(sentence=s):
+                r = Run(GATE).feed(a, 8, motion=MOVING).feed(b, 8, motion=MOVING).feed("none", 40, hands=False)
+                self.assertEqual(r.committed(), [s])
+
+    def test_a_held_still_you_alone_never_appears(self):
+        self.assertEqual(Run(GATE).feed("you", 60, motion=STILL).feed("none", 60, hands=False).committed(), [])
+
+    def test_rolling_motion_scores_for_the_diagnostic_log(self):
+        r = Run(GATE).feed("none", 30, motion=0.1)
+        self.assertAlmostEqual(r.d.mot_1s, 0.1)
+        self.assertAlmostEqual(r.d.mot_3s, 0.1)
+        r.feed("none", 10, motion=0.0)
+        self.assertAlmostEqual(r.d.mot_1s, 0.0)
+        self.assertAlmostEqual(r.d.mot_3s, 0.1 * 20 / 30)
 
 
 if __name__ == "__main__":

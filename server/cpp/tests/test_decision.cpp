@@ -32,9 +32,9 @@ struct Seq {
     std::vector<DecisionOut> frames;
     explicit Seq(DecisionCfg c) : d(cfg().labels, c) {}
     Seq() : Seq(CFG()) {}
-    Seq& feed(const std::string& label, int n, bool hands = true, double conf = 0.95) {
+    Seq& feed(const std::string& label, int n, bool hands = true, double conf = 0.95, double motion = 0.0) {
         for (int i = 0; i < n; ++i) {
-            frames.push_back(d.step(p(label, conf), hands, t));
+            frames.push_back(d.step(p(label, conf), hands, t, motion));
             if (frames.back().committed) events.emplace_back(t, *frames.back().committed);
             t += DT;
         }
@@ -375,4 +375,115 @@ TEST(DecisionGolden, MatchesPythonFrameByFrame) {
     }
     EXPECT_EQ(streams, 3);
     EXPECT_GT(commits, 20);  // the streams really contain words and sentences
+}
+
+namespace {
+DecisionCfg gate_cfg() {  // 10 ticks x 0.2 = 2.0 for a moving hand, 0 for a held one
+    DecisionCfg c = CFG();
+    c.motion_min = 1.0, c.motion_window = 10;
+    return c;
+}
+}  // namespace
+
+TEST(MotionGate, OffByDefaultAStillHandCommits) {
+    DecisionCfg c = CFG();
+    c.motion_min = 0;
+    for (const char* w : {"hello", "what", "why"}) {
+        Seq r(c);
+        r.feed(w, 10, true, 0.95, 0.0).feed("none", 30, false);
+        EXPECT_EQ(r.committed(), V{w}) << w;
+    }
+}
+
+TEST(MotionGate, AHeldStillHandNeverCommitsForEveryWord) {
+    for (const auto& w : cfg().labels) {
+        if (w == "none") continue;
+        Seq r(gate_cfg());
+        r.feed(w, 60, true, 0.95, 0.0).feed("none", 40, false);
+        EXPECT_TRUE(r.committed().empty()) << w;
+    }
+}
+
+TEST(MotionGate, AMovingHandCommitsForEveryWord) {
+    for (const auto& w : cfg().labels) {
+        if (w == "none") continue;
+        Seq r(gate_cfg());
+        r.feed(w, 12, true, 0.95, 0.2).feed("none", 40, false);
+        EXPECT_EQ(r.committed(), V{w}) << w;
+    }
+}
+
+TEST(MotionGate, AWordHeldStillCommitsAsSoonAsTheHandMoves) {
+    Seq r(gate_cfg());
+    r.feed("hello", 10, true, 0.95, 0.0).feed("hello", 10, true, 0.95, 0.2).feed("none", 40, false);
+    EXPECT_EQ(r.committed(), V{"hello"});
+}
+
+TEST(MotionGate, MotionOlderThanTheWindowDoesNotCount) {
+    DecisionCfg c = gate_cfg();
+    c.motion_window = 2;
+    Seq r(c);
+    r.feed("hello", 1, true, 0.95, 1.0).feed("hello", 12, true, 0.95, 0.0).feed("none", 40, false);
+    EXPECT_TRUE(r.committed().empty());
+}
+
+TEST(MotionGate, AStillHandCannotCompleteASentence) {
+    const char* pairs[3][2] = {{"how", "you"}, {"where", "you"}, {"you", "where"}};
+    for (auto& pr : pairs) {
+        DecisionCfg c = gate_cfg();  // a short window and a short rest between the signs, so the first sign's motion has left the window
+        c.motion_min = 0.5, c.motion_window = 4;
+        Seq r(c);
+        r.feed(pr[0], 8, true, 0.95, 0.2).feed("none", 4, true, 0.95, 0.0).feed(pr[1], 12, true, 0.95, 0.0).feed("none", 40, false);
+        EXPECT_EQ(r.committed(), V{pr[0]}) << pr[0] << "+" << pr[1];
+    }
+}
+
+TEST(MotionGate, TwoMovingSignsStillMakeTheSentences) {
+    const char* cases[3][3] = {{"how", "you", "how_are_you"}, {"where", "you", "where_are_you"}, {"you", "where", "where_are_you"}};
+    for (auto& c : cases) {
+        Seq r(gate_cfg());
+        r.feed(c[0], 8, true, 0.95, 0.2).feed(c[1], 8, true, 0.95, 0.2).feed("none", 40, false);
+        EXPECT_EQ(r.committed(), V{c[2]}) << c[2];
+    }
+}
+
+TEST(MotionGate, RollingMotionScoresForTheDiagnosticLog) {
+    Seq r(gate_cfg());
+    r.feed("none", 30, true, 0.95, 0.1);
+    EXPECT_NEAR(r.d.mot_1s(), 0.1, 1e-9);
+    EXPECT_NEAR(r.d.mot_3s(), 0.1, 1e-9);
+    r.feed("none", 10, true, 0.95, 0.0);
+    EXPECT_NEAR(r.d.mot_1s(), 0.0, 1e-9);
+    EXPECT_NEAR(r.d.mot_3s(), 0.1 * 20 / 30, 1e-9);
+}
+
+// Streams with hand motion and the motion gate on: labels, states, events and the rolling motion scores must equal Python's.
+TEST(DecisionGolden, MotionGateMatchesPythonFrameByFrame) {
+    const auto& g = golden()["decision_motion"];
+    DecisionCfg c = CFG();
+    c.motion_min = g["cfg"]["motion_min"].get<double>();
+    c.motion_window = g["cfg"]["motion_window"].get<int>();
+    int streams = 0, commits = 0;
+    for (const auto& st : g["streams"]) {
+        Decision d(cfg().labels, c);
+        const auto& pr = st["probs"];
+        const auto& hands = st["hands"];
+        const auto& mot = st["motion"];
+        const auto& exp = st["expected"];
+        const size_t n_lab = cfg().labels.size();
+        for (size_t i = 0; i < hands.size(); ++i) {
+            std::vector<double> probs(n_lab);
+            for (size_t k = 0; k < n_lab; ++k) probs[k] = pr[i * n_lab + k].get<double>();
+            const DecisionOut o = d.step(probs, hands[i].get<int>() != 0, i * 100.0, mot[i].get<double>());
+            ASSERT_EQ(o.label, exp[i][0].get<std::string>()) << "stream " << streams << " frame " << i;
+            ASSERT_EQ(o.state, exp[i][1].get<std::string>()) << "stream " << streams << " frame " << i;
+            ASSERT_EQ(o.committed.value_or(""), exp[i][2].get<std::string>()) << "stream " << streams << " frame " << i;
+            ASSERT_NEAR(d.mot_1s(), exp[i][3].get<double>(), 1e-5) << "stream " << streams << " frame " << i;
+            ASSERT_NEAR(d.mot_3s(), exp[i][4].get<double>(), 1e-5) << "stream " << streams << " frame " << i;
+            commits += !exp[i][2].get<std::string>().empty();
+        }
+        ++streams;
+    }
+    EXPECT_EQ(streams, 2);
+    EXPECT_GT(commits, 10);
 }

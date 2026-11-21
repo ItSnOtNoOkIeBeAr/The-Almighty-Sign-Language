@@ -1,11 +1,13 @@
-"""False-trigger guards: evaluate decision-logic settings on the dataset replay (VAL, TEST) and on a live diagnostic log.
+"""Evaluate decision-logic settings (motion gate, per-word thresholds, ...) on the dataset replay (VAL, TEST) and on a live diagnostic log.
 
-  training\\.venv\\Scripts\\python training\\guard_experiments.py --live logs\\diag_20261121_044956.csv --no-sign-ticks 1800 [--only name1,name2]
+  training\\.venv\\Scripts\\python training\\guard_experiments.py [--live logs\\diag_X.csv --phases logs\\diag_X.phases.json] [--configs cfgs.json] [--only a,b]
+  training\\.venv\\Scripts\\python training\\guard_experiments.py --motion-stats          # how much the hands move in word clips (VAL+TEST)
 
-Per configuration (named overrides on the deployed decision settings, see CONFIGS below) it prints, for VAL and TEST: words exactly right, doubles,
-other-gloss false triggers, sentences exactly right; and for the live log: commits during the "not signing" phase (all false) and the commits
-per word afterwards (the signer did each word 3 times, so these are a recall proxy). Settings are CHOSEN on VAL + live, TEST is only reported.
-Numbers only. The live log is read from logs/ (gitignored).
+Per configuration (named overrides on the deployed decision settings) it prints, for VAL and TEST: words exactly right, doubles, other-gloss false
+triggers, sentences exactly right; and for the live log: commits inside the "not signing" phase (all false) and commits per word in the "words"
+phase. Settings are CHOSEN on VAL + the live log, TEST is only reported. Dataset streams get the same per-tick hand motion the servers compute
+(signfeat.hand_motion between consecutive ticks); the live log carries it in its `mot` column (written by -Diag).
+The phases file comes from server\\scripts\\mark_phases.py (the signer's own markers, not guesses). Numbers only.
 """
 import argparse
 import csv
@@ -14,41 +16,40 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import torch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server" / "fallback"))
 import replay_eval as RE  # noqa: E402
 import sign_data as D  # noqa: E402
+import signfeat as S  # noqa: E402
 import train as T  # noqa: E402
 from decision import Decision  # noqa: E402
 from sign_model import SignNet  # noqa: E402
 
 MODEL = "rtmw_xl_384x288"
 WORDS = D.LABELS[1:]
+MOTION = {}  # id(probs array) -> per-tick hand motion of that stream (the arrays stay alive in the item lists)
 
 
-class Ensemble(torch.nn.Module):
-    """Mean of the logits of several SignNets (one ONNX graph when exported)."""
-
-    def __init__(self, nets):
-        super().__init__()
-        self.nets = torch.nn.ModuleList(nets)
-
-    mode = "logit"
-
-    def forward(self, x):
-        out = torch.stack([n(x).float() for n in self.nets])
-        return out.mean(0) if self.mode == "logit" else out.softmax(-1).mean(0).clamp_min(1e-9).log()
+def stream_motion(pts, flg):
+    m = np.zeros(len(pts), np.float32)
+    for i in range(1, len(pts)):
+        m[i] = S.hand_motion(pts[i - 1], pts[i], flg[i - 1], flg[i])[4]
+    return m
 
 
-def load_net(paths):
-    nets = []
-    for p in paths:
-        n = SignNet(n_cls=len(D.LABELS)).cuda().eval()
-        n.load_state_dict(torch.load(p))
-        nets.append(n)
-    return nets[0] if len(nets) == 1 else Ensemble(nets).cuda().eval()
+_orig_stream_probs = RE.stream_probs
+
+
+def _stream_probs(model, pts, flg, dev="cuda"):
+    probs = _orig_stream_probs(model, pts, flg, dev)
+    MOTION[id(probs)] = stream_motion(pts, flg)
+    return probs
+
+
+RE.stream_probs = _stream_probs  # replay_eval.build() calls it for every stream: record the motion alongside
 
 
 def base_cfg():
@@ -58,10 +59,10 @@ def base_cfg():
     return {**srv["decision"], **srv["models"][prof].get("decision", {}), **json.loads((run / "selected.json").read_text())["decision"]}
 
 
-def run_stream(probs, left, right, cfg, t0=0.0):
+def run_stream(probs, left, right, cfg, motion, t0=0.0):
     dec, ev = Decision(D.LABELS, cfg), []
     for i in range(len(probs)):
-        out = dec.step(list(map(float, probs[i])), bool(left[i] or right[i]), t0 + i * 100.0)
+        out = dec.step(list(map(float, probs[i])), bool(left[i] or right[i]), t0 + i * 100.0, float(motion[i]))
         if out[3]:
             ev.append((i, out[3]))
     return ev
@@ -70,7 +71,7 @@ def run_stream(probs, left, right, cfg, t0=0.0):
 def eval_items(items, cfg):
     word, other, sent, dbl = Counter(), Counter(), Counter(), 0
     for kind, exp, probs, flg in items:
-        ev = [e for _, e in run_stream(probs, flg[:, 3], flg[:, 4], cfg)]
+        ev = [e for _, e in run_stream(probs, flg[:, 3], flg[:, 4], cfg, MOTION[id(probs)])]
         if kind == "word":
             word["n"] += 1
             word["right"] += ev == exp
@@ -84,62 +85,66 @@ def eval_items(items, cfg):
     return word, other, sent, dbl
 
 
-def load_live(path, split_tick):
+def load_live(path, phases_path):
     rows = list(csv.DictReader(open(path)))
-    seg0 = []
-    for r in rows:  # the first stream of the log (the log restarts a stream when the client clock jumps)
-        if seg0 and int(r["ts_ms"]) - int(seg0[-1]["ts_ms"]) > 3000:
-            break
-        seg0.append(r)
-    probs = [[float(r["p_" + n]) for n in D.LABELS] for r in seg0]
-    return probs, [r["hand_L_strict"] == "1" for r in seg0], [r["hand_R_strict"] == "1" for r in seg0], [int(r["ts_ms"]) for r in seg0], split_tick
+    if "mot" not in rows[0]:
+        sys.exit(f"{path} has no motion columns: record it with a server built after the motion change (start_server.ps1 -Diag)")
+    ph = json.loads(Path(phases_path).read_text())
+    streams, cur = [], []
+    for r in rows:
+        if cur and int(r["ts_ms"]) - int(cur[-1]["ts_ms"]) > 3000:
+            streams.append(cur)
+            cur = []
+        cur.append(r)
+    streams.append(cur)
+    out = []
+    for st in streams:
+        out.append(([[float(r["p_" + n]) for n in D.LABELS] for r in st], [r["hand_L_strict"] == "1" for r in st], [r["hand_R_strict"] == "1" for r in st],
+                    [float(r["mot"]) for r in st], [int(r["ts_ms"]) for r in st]))
+    return out, ph
 
 
 def eval_live(live, cfg):
-    probs, left, right, ts, split = live
-    ev = run_stream(probs, left, right, cfg, t0=float(ts[0]))
-    false = [e for i, e in ev if i < split]
-    after = Counter(e for i, e in ev if i >= split)
+    streams, ph = live
+    false, after = [], Counter()
+    for probs, left, right, mot, ts in streams:
+        for i, e in run_stream(probs, left, right, cfg, mot, t0=float(ts[0])):
+            t = ts[i]
+            if ph["no_sign"][0] <= t < ph["no_sign"][1]:
+                false.append(e)
+            elif ph["words"][0] <= t < ph["words"][1]:
+                after[e] += 1
     return false, after
 
 
-# name -> overrides on the deployed settings. Chosen on VAL + live log; TEST is reported only.
-CONFIGS = {
-    "deployed": {},
-    "no_guard": {"repeat_rest_frames": 0},
-}
+CONFIGS = {"deployed": {}}
 
 
 def main():
     global MODEL
     ap = argparse.ArgumentParser()
-    ap.add_argument("--live", required=True)
-    ap.add_argument("--no-sign-ticks", type=int, default=1800)
+    ap.add_argument("--live")
+    ap.add_argument("--phases")
     ap.add_argument("--only", default="")
-    ap.add_argument("--ensemble", action="store_true", help="deployed checkpoint + the 4 retrained seeds (runs/<model>/base/seed*.pt), logits averaged")
-    ap.add_argument("--ens-mode", default="logit", choices=["logit", "prob"], help="average the logits (one ONNX graph) or the probabilities")
-    ap.add_argument("--only-seeds", default="", help="comma list of base seeds to use, e.g. 1,2 (default all)")
     ap.add_argument("--configs", help="JSON file: {name: overrides} replacing the built-in list")
-    ap.add_argument("--model", default=MODEL, help="rtmw_xl_384x288 (primary) or rtmw_l_m_256x192 (fallback profile)")
+    ap.add_argument("--model", default=MODEL, help="rtmw_xl_384x288 (primary) or rtmw_lm_256x192 (fallback profile)")
+    ap.add_argument("--motion-stats", action="store_true")
     a = ap.parse_args()
     MODEL = a.model
     d = D.load(MODEL)
     run = T.RUNS / MODEL
-    seeds = sorted((run / "base").glob("seed*.pt"))
-    if a.only_seeds:
-        seeds = [q for q in seeds if q.stem[4:] in a.only_seeds.split(",")]
-    paths = [run / "best.pt"] + (seeds if a.ensemble else [])
-    net = load_net(paths)
-    if a.ensemble:
-        net.mode = a.ens_mode
-    print(f"{len(paths)} checkpoint(s)")
+    net = SignNet(n_cls=len(D.LABELS)).cuda().eval()
+    net.load_state_dict(torch.load(run / "best.pt"))
     RE.TAIL = 35
     splits = {s: RE.build(net, d, s) for s in ("val", "test")}
-    live = load_live(a.live, a.no_sign_ticks)
+    if a.motion_stats:
+        motion_stats(splits)
+        return
+    live = load_live(a.live, a.phases) if a.live else None
     base = base_cfg()
     cfgs = json.loads(Path(a.configs).read_text()) if a.configs else CONFIGS
     only = set(filter(None, a.only.split(",")))
-    print(f"{'config':<28}| {'VAL right dbl FT sent':<26}| {'TEST right dbl FT sent':<26}| LIVE false  words after (hello what how why where you | sentences)")
+    print(f"{'config':<26}| {'VAL right dbl FT sent':<26}| {'TEST right dbl FT sent':<26}| LIVE: false | words in the words phase (hello what how why where you | sentences)")
     for name, over in cfgs.items():
         if only and name not in only:
             continue
@@ -148,10 +153,24 @@ def main():
         for s in ("val", "test"):
             w, o, se, dbl = eval_items(splits[s], cfg)
             cols.append(f"{w['right']:>3}/{w['n']} {dbl:>2} {o['ft']:>3}/{o['n']} {se['right']:>2}/{se['n']}")
-        false, after = eval_live(live, cfg)
-        per = " ".join(f"{after[w]:>2}" for w in WORDS)
-        sents = after["how_are_you"] + after["where_are_you"]
-        print(f"{name:<28}| {cols[0]:<25} | {cols[1]:<25} | {len(false):>4}        {per} | {sents}   false={dict(Counter(false))}")
+        tail = ""
+        if live:
+            false, after = eval_live(live, cfg)
+            tail = f"{len(false):>4}  " + " ".join(f"{after[w]:>2}" for w in WORDS) + f" | {after['how_are_you'] + after['where_are_you']}   false={dict(Counter(false))}"
+        print(f"{name:<26}| {cols[0]:<25} | {cols[1]:<25} | {tail}")
+
+
+def gate_value(m, end, window):
+    return float(m[max(0, end - window + 1):end + 1].sum())
+
+
+def motion_stats(splits):
+    """The best the motion gate could see in a stream: the maximum over the stream of the summed motion of W consecutive ticks, per clip kind."""
+    for W in (10, 20, 30):
+        for kind in ("word", "other", "sentence"):
+            vals = np.array([max(gate_value(MOTION[id(p)], i, W) for i in range(len(p))) for k, _, p, _ in splits["val"] + splits["test"] if k == kind])
+            q = np.percentile(vals, [0, 5, 10, 25, 50, 75])
+            print(f"W={W:>2} {kind:<9} n={len(vals):>3} max-sum percentiles 0/5/10/25/50/75: " + " ".join(f"{x:.2f}" for x in q))
 
 
 if __name__ == "__main__":

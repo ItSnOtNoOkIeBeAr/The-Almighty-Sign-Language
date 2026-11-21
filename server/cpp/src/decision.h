@@ -19,6 +19,9 @@ struct DecisionCfg {
     double repeat_rest_p = 0.2, repeat_cooldown_ms = 2000;
     // Per-word commit threshold (server.json "thr_<word>"); a word not listed here uses commit_threshold.
     std::map<std::string, double> word_threshold;
+    // Motion gate (0 = off): a word may commit only if the summed hand motion (shoulder widths per tick) over the last motion_window ticks reaches motion_min.
+    double motion_min = 0;
+    int motion_window = 10;
 };
 
 struct DecisionOut {
@@ -32,7 +35,9 @@ class Decision {
 public:
     Decision(std::vector<std::string> labels, DecisionCfg cfg);
     void reset();
-    DecisionOut step(const std::vector<double>& probs, bool hands_present, double t_ms);
+    DecisionOut step(const std::vector<double>& probs, bool hands_present, double t_ms, double motion = 0.0);
+    double mot_1s() const;  // mean hand motion over the last 10 ticks (diagnostics)
+    double mot_3s() const;  // ... and over the last 30
 
 private:
     struct Pending { std::string word; double t_ms; };
@@ -45,6 +50,7 @@ private:
     int none_ = 0;
     std::vector<double> thr_;                // commit threshold per label
     std::deque<bool> hands_;
+    std::deque<double> mot_;                 // hand motion per tick, newest last (30)
     std::vector<double> ema_;                // empty = no EMA yet
     int cand_ = -1, consec_ = 0, fired_ = -1, away_ = 0;
     double last_commit_ = -1e18;

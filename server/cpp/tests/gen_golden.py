@@ -32,8 +32,9 @@ def feature_case(shoulders_ok_frames, hand_l_frames, hand_r_frames):
         row, fl = S.frame_row(k, sc, 1.9, 3.44, (640, 480))
         kpts.append(k), scores.append(sc), rows.append(row), flags.append(fl)
     w = S.window_features(torch.from_numpy(np.stack(rows))[None], torch.from_numpy(np.stack(flags))[None])[0].numpy()
+    motion = [list(S.hand_motion(rows[t - 1], rows[t], flags[t - 1], flags[t])) for t in range(1, S.WINDOW)]  # hand movement between consecutive ticks
     return {"kpt": [short(k, 2) for k in kpts], "score": [short(s, 2) for s in scores],
-            "flags": [f.astype(int).tolist() for f in flags], "features": short(w, 5)}
+            "flags": [f.astype(int).tolist() for f in flags], "features": short(w, 5), "motion": short(np.array(motion), 5)}
 
 out["features"] = [
     feature_case(lambda t: True, lambda t: t > 5, lambda t: t % 3 != 0),        # both hands, flickering right hand
@@ -67,10 +68,13 @@ DEC_CFG = json.loads((ROOT / "server" / "config" / "server.json").read_text())["
 
 def decision_stream(seed, frames=900):
     r = np.random.default_rng(seed)
-    probs, hands = [], []
+    probs, hands, motion = [], [], []
+    state = {"moving": True}
 
     def add(label, n, conf, hand=True, wobble=0.0):
+        state["moving"] = bool(r.random() < 0.7)  # a stretch of the sign is either moving or held still
         for _ in range(n):
+            motion.append(float(r.uniform(0.05, 0.3)) if state["moving"] else float(r.uniform(0.0, 0.01)))
             c = float(np.clip(conf + r.normal(0, 0.03), 0.3, 0.99)) if label != "none" else float(np.clip(conf + r.normal(0, 0.03), 0.3, 0.99))
             if r.random() < wobble:  # the model briefly drops the word
                 label_now, c = ("none" if r.random() < 0.5 else LABELS[int(r.integers(1, 7))]), 0.9
@@ -91,14 +95,14 @@ def decision_stream(seed, frames=900):
             if r.random() < 0.5:
                 w = LABELS[int(r.integers(1, 7))]
             add("none", int(r.integers(0, 6)), 0.9, hand=bool(r.random() < 0.5))
-    probs, hands = probs[:frames], hands[:frames]
+    probs, hands, motion = probs[:frames], hands[:frames], [round(m, 4) for m in motion[:frames]]
     probs = [[round(x, 3) for x in p_] for p_ in probs]
-    return probs, hands
+    return probs, hands, motion
 
 
 streams = []
 for seed in (11, 12, 13):
-    probs, hands = decision_stream(seed)
+    probs, hands, _ = decision_stream(seed)
     dec, frames = Decision(LABELS, DEC_CFG), []
     for i, (pr, h) in enumerate(zip(probs, hands)):
         lab, conf, state, committed = dec.step(pr, h, i * 100.0)
@@ -106,6 +110,19 @@ for seed in (11, 12, 13):
     streams.append({"probs": [x for p_ in probs for x in p_], "hands": [int(h) for h in hands], "expected": frames})
 out["decision"] = streams
 print("decision golden: commits per stream", [sum(1 for f in s_["expected"] if f[2]) for s_ in streams])
+
+# 4b. the same kind of streams WITH hand motion and the motion gate on (motion_min 1.0 over 10 ticks)
+MOTION_CFG = {"motion_min": 1.0, "motion_window": 10}
+mstreams = []
+for seed in (14, 15):
+    probs, hands, motion = decision_stream(seed)
+    dec, frames = Decision(LABELS, {**DEC_CFG, **MOTION_CFG}), []
+    for i, (pr, h, m) in enumerate(zip(probs, hands, motion)):
+        lab, conf, state, committed = dec.step(pr, h, i * 100.0, m)
+        frames.append([lab, state, committed or "", round(dec.mot_1s, 6), round(dec.mot_3s, 6)])
+    mstreams.append({"probs": [x for p_ in probs for x in p_], "hands": [int(h) for h in hands], "motion": motion, "expected": frames})
+out["decision_motion"] = {"cfg": MOTION_CFG, "streams": mstreams}
+print("motion-gated decision golden: commits per stream", [sum(1 for f in s_["expected"] if f[2]) for s_ in mstreams])
 
 # 5. ticks: client timestamps at 10-30 fps (jitter, dropped frames, a gap, a long pause) through the 10 fps recognition clock (server/fallback/ticks.py)
 from ticks import TickGrid  # noqa: E402

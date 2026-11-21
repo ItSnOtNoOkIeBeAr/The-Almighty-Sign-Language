@@ -174,12 +174,13 @@ void Pipeline::open_diag(const std::string& path) {
     if (!diag_) throw std::runtime_error("cannot open diagnostic log " + path);
     diag_ << "ts_ms,profile";
     for (const auto& l : cfg_.labels) diag_ << ",p_" << l;
-    diag_ << ",top1,top2,top3,label,conf,state,committed,hand_L_loose,hand_R_loose,hand_L_strict,hand_R_strict,pts_L,pts_R,thr\n";
+    diag_ << ",top1,top2,top3,label,conf,state,committed,hand_L_loose,hand_R_loose,hand_L_strict,hand_R_strict,pts_L,pts_R,thr,mot_L_wrist,mot_L_tips,mot_R_wrist,mot_R_tips,mot,mot_1s,mot_3s\n";
     spdlog::info("diagnostic log (numbers only, no images): {}", path);
 }
 
 // One CSV line per 10 fps decision tick. pts_L / pts_R = how many of the 21 hand points score above the loose threshold (a hand needs >= 15 to count).
-void Pipeline::write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const feat::FrameRow& row, const DecisionOut& d) {
+void Pipeline::write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const feat::FrameRow& row, const DecisionOut& d,
+                          const std::array<float, 5>& mot, double mot_1s, double mot_3s) {
     std::vector<size_t> order(probs.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return probs[a] > probs[b]; });
@@ -192,7 +193,9 @@ void Pipeline::write_diag(double ts_ms, const Stage& s, const std::vector<double
         diag_ << ',' << buf;
     }
     diag_ << ',' << d.label << ',' << d.confidence << ',' << d.state << ',' << (d.committed ? *d.committed : "") << ',' << row.flags[0] << ',' << row.flags[1]
-          << ',' << row.flags[3] << ',' << row.flags[4] << ',' << n_l << ',' << n_r << ',' << s.cfg.keypoint_thr << '\n';
+          << ',' << row.flags[3] << ',' << row.flags[4] << ',' << n_l << ',' << n_r << ',' << s.cfg.keypoint_thr;
+    for (float m : mot) diag_ << ',' << (std::snprintf(buf, sizeof buf, "%.4f", m), buf);
+    diag_ << ',' << (std::snprintf(buf, sizeof buf, "%.4f", mot_1s), buf) << ',' << (std::snprintf(buf, sizeof buf, "%.4f", mot_3s), buf) << '\n';
     diag_.flush();
 }
 
@@ -243,9 +246,10 @@ Result Pipeline::process(StreamState& st, const unsigned char* jpeg, size_t n, d
             for (int i = 0; i < s.n_classes; ++i) sum += (probs[i] = std::exp((double)s.h_logits[i] - mx));
             for (auto& p : probs) p /= sum;
             const feat::FrameRow& tick_row = *win[feat::kWindow - 1];
-            const DecisionOut d = st.decision.step(probs, tick_row.flags[3] || tick_row.flags[4], t_tick);  // strict presence drives the idle gate
+            const auto mot = feat::hand_motion(*win[feat::kWindow - 2], tick_row);  // movement since the previous tick (0 at the start of a stream)
+            const DecisionOut d = st.decision.step(probs, tick_row.flags[3] || tick_row.flags[4], t_tick, mot[4]);  // strict presence drives the idle gate
             st.record(d);
-            if (diag_.is_open()) write_diag(t_tick, s, probs, tick_row, d);
+            if (diag_.is_open()) write_diag(t_tick, s, probs, tick_row, d, mot, st.decision.mot_1s(), st.decision.mot_3s());
         }
         r.ms.temporal = ms_since(t2);  // 0 for frames that are not a tick
         const DecisionOut d = st.report();

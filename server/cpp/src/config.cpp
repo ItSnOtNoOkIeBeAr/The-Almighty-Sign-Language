@@ -29,6 +29,8 @@ void apply_decision(DecisionCfg& d, const json& j) {
     d.repeat_rest_frames = j.value("repeat_rest_frames", d.repeat_rest_frames);
     d.repeat_rest_p = j.value("repeat_rest_p", d.repeat_rest_p);
     d.repeat_cooldown_ms = j.value("repeat_cooldown_ms", d.repeat_cooldown_ms);
+    d.motion_min = j.value("motion_min", d.motion_min);
+    d.motion_window = j.value("motion_window", d.motion_window);
     for (auto it = j.begin(); it != j.end(); ++it)  // thr_<word>: per-word commit threshold
         if (it.key().rfind("thr_", 0) == 0 && it.value().is_number()) d.word_threshold[it.key().substr(4)] = it.value().get<double>();
 }

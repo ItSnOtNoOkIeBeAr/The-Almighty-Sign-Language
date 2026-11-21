@@ -29,6 +29,7 @@ int Decision::index_of(const std::string& label) const {
 
 void Decision::reset() {
     hands_.clear();
+    mot_.clear();
     ema_.clear();
     cand_ = -1, consec_ = 0, fired_ = -1, away_ = 0;
     last_commit_ = -1e18;
@@ -37,7 +38,21 @@ void Decision::reset() {
     outbox_.clear();
 }
 
-DecisionOut Decision::step(const std::vector<double>& probs, bool hands_present, double t_ms) {
+double Decision::mot_1s() const {
+    double s = 0;
+    for (size_t i = mot_.size() > 10 ? mot_.size() - 10 : 0; i < mot_.size(); ++i) s += mot_[i];
+    return s / 10.0;
+}
+
+double Decision::mot_3s() const {
+    double s = 0;
+    for (double m : mot_) s += m;
+    return s / 30.0;
+}
+
+DecisionOut Decision::step(const std::vector<double>& probs, bool hands_present, double t_ms, double motion) {
+    mot_.push_back(motion);
+    if (mot_.size() > 30) mot_.pop_front();
     std::vector<std::string> emitted;
     if (pending_ && t_ms - pending_->t_ms > cfg_.join_ms) {
         emitted.push_back(pending_->word);
@@ -76,7 +91,14 @@ DecisionOut Decision::step(const std::vector<double>& probs, bool hands_present,
         cand_ = -1, consec_ = 0;
     }
     const bool repeat = guard_ >= 0 && cand_ == guard_;  // the same word again, without the sign having ended in between
-    if (cand_ >= 0 && consec_ >= cfg_.commit_consecutive_M && cand_ != fired_ && t_ms - last_commit_ >= cfg_.cooldown_ms && !repeat) {
+    bool moved = cfg_.motion_min <= 0;  // the hands moved during the sign
+    if (!moved) {
+        double s = 0;
+        const size_t n = std::min<size_t>(mot_.size(), cfg_.motion_window);
+        for (size_t i = mot_.size() - n; i < mot_.size(); ++i) s += mot_[i];
+        moved = s >= cfg_.motion_min;
+    }
+    if (cand_ >= 0 && moved && consec_ >= cfg_.commit_consecutive_M && cand_ != fired_ && t_ms - last_commit_ >= cfg_.cooldown_ms && !repeat) {
         for (auto& e : commit(labels_[cand_], t_ms)) emitted.push_back(std::move(e));
         fired_ = cand_, away_ = 0, last_commit_ = t_ms, consec_ = 0;
         if (n_rest > 0) guard_ = cand_, guard_t_ = t_ms, rest_run_ = 0;

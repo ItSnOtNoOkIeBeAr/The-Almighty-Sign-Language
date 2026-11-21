@@ -50,6 +50,26 @@ FrameRow frame_row(const float* kpt, const float* score, float thr, float presen
     return r;
 }
 
+std::array<float, 5> hand_motion(const FrameRow& prev, const FrameRow& cur) {
+    float w = 0;
+    if (cur.flags[2]) w = std::hypot(cur.pts[0][0] - cur.pts[1][0], cur.pts[0][1] - cur.pts[1][1]);
+    if (w < 20) w = kDefaultScale;
+    std::array<float, 5> out{};
+    float m = 0;
+    for (int h = 0; h < 2; ++h) {
+        if (!(prev.flags[h] && cur.flags[h])) continue;
+        const int base = h == 0 ? kL0 : kR0;
+        auto d = [&](int k) { return std::hypot(cur.pts[base + k][0] - prev.pts[base + k][0], cur.pts[base + k][1] - prev.pts[base + k][1]) / w; };
+        float tips = 0;
+        for (int k : {4, 8, 12, 16, 20}) tips += d(k);
+        tips /= 5.0f;
+        out[2 * h] = d(0), out[2 * h + 1] = tips;
+        m = std::max(m, 0.5f * (out[2 * h] + out[2 * h + 1]));
+    }
+    out[4] = m;
+    return out;
+}
+
 void window_features(const FrameRow* const* rows, float* out) {
     // window centre and scale: median over the frames whose shoulders are reliable
     std::vector<float> cx, cy, sw;

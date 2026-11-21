@@ -51,7 +51,8 @@ private:
     struct Stage;  // engines + buffers of one profile
     Keypoints run_keypoints(Stage& s, const DeviceImage& img, StageMs* ms, cudaEvent_t e_start);
     void degrade(const std::string& reason);  // call with gpu_ held
-    void write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const feat::FrameRow& row, const DecisionOut& d);
+    void write_diag(double ts_ms, const Stage& s, const std::vector<double>& probs, const feat::FrameRow& row, const DecisionOut& d,
+                    const std::array<float, 5>& mot, double mot_1s, double mot_3s);
 
     Config cfg_;
     std::mutex gpu_;

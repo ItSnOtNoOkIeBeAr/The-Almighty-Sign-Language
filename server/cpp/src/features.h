@@ -20,6 +20,9 @@ struct FrameRow {
 // kpt: 133 x (x, y) in frame pixels; score: 133. thr = loose per-model threshold, present_thr = strict one.
 FrameRow frame_row(const float* kpt, const float* score, float thr, float present_thr, int width, int height);
 
+// Hand movement between two consecutive ticks in shoulder widths: {wrist L, tips L, wrist R, tips R, motion}. Port of signfeat.hand_motion().
+std::array<float, 5> hand_motion(const FrameRow& prev, const FrameRow& cur);
+
 // rows: kWindow frames, oldest first -> out: kWindow x kDim floats.
 void window_features(const FrameRow* const* rows, float* out);
 }  // namespace feat

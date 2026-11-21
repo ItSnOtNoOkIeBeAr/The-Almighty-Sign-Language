@@ -27,7 +27,13 @@ TEST(Features, WindowFeaturesMatchPython) {
         ASSERT_EQ(want.size(), out.size());
         double worst = 0;
         for (size_t i = 0; i < out.size(); ++i) worst = std::max(worst, (double)std::fabs(out[i] - want[i]));
-        EXPECT_LT(worst, 2e-5) << "case " << ci;  // float32 vs float32 maths; golden is rounded to 6 decimals
+        EXPECT_LT(worst, 2e-5) << "case " << ci;
+        const auto motion = c["motion"].get<std::vector<float>>();  // hand_motion between consecutive frames, 5 values each
+        ASSERT_EQ(motion.size(), (size_t)(feat::kWindow - 1) * 5);
+        for (int t = 1; t < feat::kWindow; ++t) {
+            const auto m = feat::hand_motion(rows[t - 1], rows[t]);
+            for (int k = 0; k < 5; ++k) EXPECT_NEAR(m[k], motion[(t - 1) * 5 + k], 2e-5) << "case " << ci << " frame " << t << " value " << k;
+        }  // float32 vs float32 maths; golden is rounded to 6 decimals
         ++ci;
     }
 }

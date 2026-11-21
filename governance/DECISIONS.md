@@ -159,3 +159,7 @@ Detectors (a person box was found in 1398 of 1399 frames by both): YOLOX-m ORT 2
 Live false commits (typing, resting, waving in view) are high-confidence, 2-6 s, still-hand predictions, so global threshold, margin, minimum duration, onset-rest, two-handed
 rules and gate hysteresis were tested and rejected: they cost words or sentences for little or no live gain (table in STATUS). Adopted: a per-word threshold, `thr_why` 0.7 (free on VAL and TEST,
 both keypoint models). Seed ensemble rejected for now (sentences -4 on TEST). The temporary guard knobs were removed from decision.py so Python and C++ stay a line-by-line pair.
+
+## Motion gate (2026-11-21)
+Live false commits are held still hands, so the next guard uses a feature the decision did not have: hand motion between ticks in shoulder widths, summed over a short window and required before any commit (so also for every word of a sentence).
+Motion is computed from the tick rows the temporal model already uses (no extra model, no retraining), identically in Python and C++ (golden test). The gate ships OFF until its threshold is chosen on the user's live log; the dataset only bounds it from above (W20 / 1.3 costs <= 1 word and 1 sentence).

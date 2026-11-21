@@ -55,14 +55,16 @@ class DiagLog:
     def __init__(self, path):
         self.f = open(path, "w", encoding="utf-8", newline="\n")
         self.f.write("ts_ms,profile," + ",".join("p_" + n for n in LABELS) + ",top1,top2,top3,label,conf,state,committed,"
-                     "hand_L_loose,hand_R_loose,hand_L_strict,hand_R_strict,pts_L,pts_R,thr\n")
+                     "hand_L_loose,hand_R_loose,hand_L_strict,hand_R_strict,pts_L,pts_R,thr,"
+                     "mot_L_wrist,mot_L_tips,mot_R_wrist,mot_R_tips,mot,mot_1s,mot_3s\n")
         log.info("diagnostic log (numbers only, no images): %s", path)
 
-    def write(self, ts_ms, profile, probs, counts, flags, thr, label, conf, state, committed):
+    def write(self, ts_ms, profile, probs, counts, flags, thr, mot, mot_1s, mot_3s, label, conf, state, committed):
         top = sorted(range(len(LABELS)), key=lambda i: -probs[i])[:3]
         n_l, n_r = counts  # hand keypoints above the loose threshold (of 21 each)
         self.f.write(f"{int(ts_ms)},{profile}," + ",".join(f"{p:.4f}" for p in probs) + "," + ",".join(f"{LABELS[i]}:{probs[i]:.3f}" for i in top)
-                     + f",{label},{conf},{state},{committed or ''},{int(flags[0])},{int(flags[1])},{int(flags[3])},{int(flags[4])},{n_l},{n_r},{thr}\n")
+                     + f",{label},{conf},{state},{committed or ''},{int(flags[0])},{int(flags[1])},{int(flags[3])},{int(flags[4])},{n_l},{n_r},{thr},"
+                     + ",".join(f"{m:.4f}" for m in mot) + f",{mot_1s:.4f},{mot_3s:.4f}\n")
         self.f.flush()
 
 
@@ -105,10 +107,11 @@ class Engine:
             logits = self.temporal.run(None, {"x": feats})[0][0]
             probs = np.exp(logits - logits.max())
             probs /= probs.sum()
-            out = st.decision.step(probs.tolist(), bool(tf[3] or tf[4]), t_tick)  # strict presence drives the idle gate
+            mot = S.hand_motion(wp[-2], wp[-1], wf[-2], wf[-1])  # movement since the previous tick (0 at the start of a stream)
+            out = st.decision.step(probs.tolist(), bool(tf[3] or tf[4]), t_tick, mot[4])  # strict presence drives the idle gate
             st.record(out)
             if self.diag:
-                self.diag.write(t_tick, self.profile, probs.tolist(), tc, tf, self.thr, *out)
+                self.diag.write(t_tick, self.profile, probs.tolist(), tc, tf, self.thr, mot, st.decision.mot_1s, st.decision.mot_3s, *out)
         t3 = time.perf_counter()
         label, conf, state, committed = st.report()
         res = {
